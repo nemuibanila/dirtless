@@ -9,6 +9,7 @@
 #include <chrono>
 #include <VkBootstrap.h>
 #include <magic_enum.h>
+#include "g_pipeline.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -285,6 +286,40 @@ namespace zebra {
 			DBG("triangle vertex shader loaded");
 		}
 
+		VkPipelineLayoutCreateInfo pipeline_layout_info = vki::pipeline_layout_create_info();
+		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &pipeline_layout_info, nullptr, &_triangle_pipeline_layout));
+
+		PipelineBuilder pipeline_builder;
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, triangle_vertex)
+		);
+
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, triangle_frag)
+		);
+
+		pipeline_builder._vertex_input_info = vki::vertex_input_state_create_info();
+		pipeline_builder._input_assembly = vki::input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+		pipeline_builder._viewport = {
+			.x = 0.0f,
+			.y = 0.0f,
+			.width = (float)_window.vkb_swapchain.extent.width,
+			.height = (float)_window.vkb_swapchain.extent.height,
+			.minDepth = 0.0f,
+			.maxDepth = 1.0f,
+		};
+
+		pipeline_builder._scissor = {
+			.offset = { 0, 0 },
+			.extent = _window.vkb_swapchain.extent,
+		};
+
+		pipeline_builder._rasterizer = vki::rasterization_state_create_info(VK_POLYGON_MODE_FILL);
+		pipeline_builder._multisampling = vki::multisampling_state_create_info();
+		pipeline_builder._color_blend_attachment = vki::color_blend_attachment_state();
+		pipeline_builder._pipelineLayout = _triangle_pipeline_layout;
+		
+		_triangle_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
 		return true;
 	}
 
@@ -384,108 +419,116 @@ namespace zebra {
 		return true;
 	}
 
+	void zCore::draw_loop(std::stop_token stoken) {
+		auto old_frame_start = std::chrono::steady_clock::now();
+		auto dt = 1.f / 60.f;
+		auto time_acc = 0.f;
+		double global_current_time = 0.0;
+
+		while (true) {
+			auto start_frame = std::chrono::high_resolution_clock::now();
+			auto time_passed = start_frame - old_frame_start;
+			auto time_passed_float = std::chrono::duration<float>(time_passed).count();
+			global_current_time += time_passed_float;
+			time_acc += time_passed_float;
+
+			if (time_acc > dt) {
+				// do time step
+				DBG("time step! " << time_acc);
+				time_acc -= dt;
+				global_current_time += dt;
+			}
+
+			if(vkGetFenceStatus(_vk.device(), _sync.renderF) == VK_SUCCESS)
+			{ // actual rendering
+				vkResetFences(_vk.device(), 1, &_sync.renderF);
+				uint32_t swapchain_image_idx;
+				auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, _sync.presentS, nullptr, &swapchain_image_idx);
+
+				if (acquire_result == VK_SUCCESS || acquire_result == VK_SUBOPTIMAL_KHR) {
+					// we have an image to render to
+					VK_CHECK(vkResetCommandBuffer(_vk.cmd_main, 0));
+					VkCommandBufferBeginInfo cmd_begin_info = {
+						.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+						.pNext = nullptr,
+						.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+						.pInheritanceInfo = nullptr,
+					};
+
+					VK_CHECK(vkBeginCommandBuffer(_vk.cmd_main, &cmd_begin_info));
+					VkClearValue clear_value;
+					float flash = abs(sin(global_current_time));
+					clear_value.color = { {0.f, 0.f, flash, 1.f} };
+
+					VkRenderPassBeginInfo rp_info = {
+						.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+						.pNext = nullptr,
+						.renderPass = _vk.renderpass,
+						.framebuffer = _vk.framebuffers[swapchain_image_idx],
+						.renderArea = {
+							.offset = {
+							.x = 0,
+							.y = 0,
+					},
+					.extent = _window.vkb_swapchain.extent,
+					},
+					.clearValueCount = 1,
+					.pClearValues = &clear_value,
+					};
+
+					vkCmdBeginRenderPass(_vk.cmd_main, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
+
+					vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _triangle_pipeline);
+					vkCmdDraw(_vk.cmd_main, 3, 1, 0, 0);
+
+					vkCmdEndRenderPass(_vk.cmd_main);
+
+					VK_CHECK(vkEndCommandBuffer(_vk.cmd_main));
+
+					VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+					VkSubmitInfo submit_info = {
+						.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+						.pNext = nullptr,
+						.waitSemaphoreCount = 1,
+						.pWaitSemaphores = &_sync.presentS,
+						.pWaitDstStageMask = &wait_stage,
+						.commandBufferCount = 1,
+						.pCommandBuffers = &_vk.cmd_main,
+						.signalSemaphoreCount = 1,
+						.pSignalSemaphores = &_sync.renderS,
+					};
+
+					VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, _sync.renderF));
+					VkPresentInfoKHR present_info = {
+						.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+						.pNext = nullptr,
+						.waitSemaphoreCount = 1,
+						.pWaitSemaphores = &_sync.renderS,
+						.swapchainCount = 1,
+						.pSwapchains = &_window.vkb_swapchain.swapchain,
+						.pImageIndices = &swapchain_image_idx,
+					};
+
+					VK_CHECK(vkQueuePresentKHR(_vk.graphics_queue, &present_info));
+				} 
+			}
+
+			if (stoken.stop_requested()) {
+				DBG("stop requested");
+				std::this_thread::sleep_for(std::chrono::seconds(1));
+				return;
+			}
+
+			old_frame_start = start_frame;
+			std::this_thread::yield();
+		};
+	}
+
 	// APP
 	void zCore::app_loop() {
 
 		std::jthread draw_thread([this](std::stop_token stoken){ 
-			auto old_frame_start = std::chrono::steady_clock::now();
-			auto dt = 1.f / 60.f;
-			auto time_acc = 0.f;
-			double global_current_time = 0.0;
-
-			while (true) {
-				auto start_frame = std::chrono::high_resolution_clock::now();
-				auto time_passed = start_frame - old_frame_start;
-				auto time_passed_float = std::chrono::duration<float>(time_passed).count();
-				global_current_time += time_passed_float;
-				time_acc += time_passed_float;
-
-				if (time_acc > dt) {
-					// do time step
-					DBG("time step! " << time_acc);
-					time_acc -= dt;
-					global_current_time += dt;
-				}
-				
-				if(vkGetFenceStatus(_vk.device(), _sync.renderF) == VK_SUCCESS)
-				{ // actual rendering
-					vkResetFences(_vk.device(), 1, &_sync.renderF);
-					uint32_t swapchain_image_idx;
-					auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, _sync.presentS, nullptr, &swapchain_image_idx);
-
-					if (acquire_result == VK_SUCCESS || acquire_result == VK_SUBOPTIMAL_KHR) {
-						// we have an image to render to
-						VK_CHECK(vkResetCommandBuffer(_vk.cmd_main, 0));
-						VkCommandBufferBeginInfo cmd_begin_info = {
-							.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-							.pNext = nullptr,
-							.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-							.pInheritanceInfo = nullptr,
-						};
-
-						VK_CHECK(vkBeginCommandBuffer(_vk.cmd_main, &cmd_begin_info));
-						VkClearValue clear_value;
-						float flash = abs(sin(global_current_time));
-						clear_value.color = { {0.f, 0.f, flash, 1.f} };
-
-						VkRenderPassBeginInfo rp_info = {
-							.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-							.pNext = nullptr,
-							.renderPass = _vk.renderpass,
-							.framebuffer = _vk.framebuffers[swapchain_image_idx],
-							.renderArea = {
-								.offset = {
-									.x = 0,
-									.y = 0,
-								},
-								.extent = _window.vkb_swapchain.extent,
-							},
-							.clearValueCount = 1,
-							.pClearValues = &clear_value,
-						};
-
-						vkCmdBeginRenderPass(_vk.cmd_main, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
-						vkCmdEndRenderPass(_vk.cmd_main);
-
-						VK_CHECK(vkEndCommandBuffer(_vk.cmd_main));
-
-						VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-						VkSubmitInfo submit_info = {
-							.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-							.pNext = nullptr,
-							.waitSemaphoreCount = 1,
-							.pWaitSemaphores = &_sync.presentS,
-							.pWaitDstStageMask = &wait_stage,
-							.commandBufferCount = 1,
-							.pCommandBuffers = &_vk.cmd_main,
-							.signalSemaphoreCount = 1,
-							.pSignalSemaphores = &_sync.renderS,
-						};
-
-						VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, _sync.renderF));
-						VkPresentInfoKHR present_info = {
-							.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-							.pNext = nullptr,
-							.waitSemaphoreCount = 1,
-							.pWaitSemaphores = &_sync.renderS,
-							.swapchainCount = 1,
-							.pSwapchains = &_window.vkb_swapchain.swapchain,
-							.pImageIndices = &swapchain_image_idx,
-						};
-
-						VK_CHECK(vkQueuePresentKHR(_vk.graphics_queue, &present_info));
-					} 
-				}
-
-				if (stoken.stop_requested()) {
-					DBG("stop requested");
-					std::this_thread::sleep_for(std::chrono::seconds(1));
-					return;
-				}
-
-				old_frame_start = start_frame;
-				std::this_thread::yield();
-			};
+			this->draw_loop(stoken);
 		});
 
 

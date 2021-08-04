@@ -9,6 +9,8 @@
 #include <functional>
 #include <queue>
 #include <set>
+#include <thread>
+#include <chrono>
 
 #define DBG(x) std::cerr<<"["<<__func__<<"]"<<x<<std::endl;
 
@@ -131,12 +133,17 @@ namespace zebra {
 		bool init_pipelines();
 		bool recreate_swapchain();
 		bool create_window();
+		
 		void app_loop();
+		void draw_loop(std::stop_token stoken);
 
 		// helpers
 		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
 
 	public:
+		VkPipelineLayout _triangle_pipeline_layout;
+		VkPipeline _triangle_pipeline;
+
 		zCore();
 		virtual ~zCore();
 		zCore(const zCore&) = delete;
