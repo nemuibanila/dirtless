@@ -14,10 +14,10 @@
 
 #define VK_CHECK(x) do {\
 VkResult err = x;\
-if (err) { std::cerr << "[" << __func__ << "]" << "vulkan error:" << (char)20 << x << std::endl; abort();}\
+if (err) { std::cerr << "[" << __func__ << "]" << "vulkan error: " << err << std::endl; abort();}\
 } while (false)
 
-namespace zebra {
+namespace zebra { 
 	
 	struct VulkanSync {
 		VkSemaphore presentS, renderS;
@@ -121,13 +121,14 @@ namespace zebra {
 		std::vector<KeyInput> key_inputs;
 
 		// Gfx
-		bool initialize_vulkan();
-		bool initialize_gfx();
-		bool initialize_default_renderpass();
-		bool initialize_commands();
-		bool initialize_swapchain();
-		bool initialize_framebuffers();
-		bool initialize_sync();
+		bool init_vulkan();
+		bool init_gfx();
+		bool init_default_renderpass();
+		bool init_commands();
+		bool init_swapchain();
+		bool init_framebuffers();
+		bool init_sync();
+		bool init_pipelines();
 		bool recreate_swapchain();
 		bool create_window();
 		void app_loop();

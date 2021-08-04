@@ -1,6 +1,7 @@
 #include "zebralib.h"
 #include <iostream>
 #include <fstream>
+#include <filesystem>
 #include <vector>
 #include <string>
 #include <vk_mem_alloc.h>
@@ -22,7 +23,7 @@ namespace zebra {
 	}
 
 	bool zCore::start_application() {
-		if (!initialize_gfx()) return false;
+		if (!init_gfx()) return false;
 
 		glfwSetWindowUserPointer(_window.handle, this);
 		glfwSetKeyCallback(_window.handle, zCore::_glfw_key_callback_caller);
@@ -40,40 +41,41 @@ namespace zebra {
 		return true;
 	}
 
-	bool zCore::initialize_gfx() {
+	bool zCore::init_gfx() {
 		DBG("start");
 
 		if (glfwInit()) {
 			DBG("glfw success");
 		}
 
-		
-
 		DBG("window");
 		if (!this->create_window()) return false;
 
 		DBG("vulkan");
-		if (!this->initialize_vulkan()) return false;
+		if (!this->init_vulkan()) return false;
 
 		DBG("swapchain");
-		if (!this->initialize_swapchain()) return false;
+		if (!this->init_swapchain()) return false;
 
 		DBG("command pool");
-		if (!this->initialize_commands()) return false;
+		if (!this->init_commands()) return false;
 
 		DBG("render pass");
-		if (!this->initialize_default_renderpass()) return false;
+		if (!this->init_default_renderpass()) return false;
 
 		DBG("framebuffers");
-		if (!this->initialize_framebuffers()) return false;
+		if (!this->init_framebuffers()) return false;
 
 		DBG("sync");
-		if (!this->initialize_sync()) return false;
+		if (!this->init_sync()) return false;
+
+		DBG("pipelines/shaders");
+		if (!this->init_pipelines()) return false;
 
 		return true;
 	}
 
-	bool zCore::initialize_commands() {
+	bool zCore::init_commands() {
 		auto poolinfo = vki::command_pool_create_info(
 			_vk.vkb_device.get_queue_index(vkb::QueueType::graphics).value(),
 			VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -88,7 +90,7 @@ namespace zebra {
 		return true;
 	}
 
-	bool zCore::initialize_default_renderpass() {
+	bool zCore::init_default_renderpass() {
 		VkAttachmentDescription color_attachment = {
 			.format = _window.vkb_swapchain.image_format,
 			.samples = VK_SAMPLE_COUNT_1_BIT, // relevant for msaa
@@ -123,7 +125,7 @@ namespace zebra {
 		return true;
 	}
 
-	bool zCore::initialize_framebuffers() {
+	bool zCore::init_framebuffers() {
 
 		i32 w, h;
 		glfwGetFramebufferSize(_window.handle, &w, &h);
@@ -149,7 +151,7 @@ namespace zebra {
 
 	}
 
-	bool zCore::initialize_sync() {
+	bool zCore::init_sync() {
 		VkFenceCreateInfo fence_info = {
 			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 			.pNext = nullptr,
@@ -181,7 +183,7 @@ namespace zebra {
 		return true;
 	}
 
-	bool zCore::initialize_swapchain() {
+	bool zCore::init_swapchain() {
 		vkb::SwapchainBuilder swapchain_builder{ _vk.vkb_device };
 		auto swap_ret = swapchain_builder.build();
 		if (!swap_ret) {
@@ -207,7 +209,7 @@ namespace zebra {
 		return true;
 	}
 
-	bool zCore::initialize_vulkan() {
+	bool zCore::init_vulkan() {
 		if (!glfwVulkanSupported()) {
 			DBG("Vulkan is not supported.");
 			return false;
@@ -264,6 +266,24 @@ namespace zebra {
 		}
 		_vk.graphics_queue = graphics_queue_ret.value();
 		DBG("complete and ready to use.");
+
+		return true;
+	}
+
+	bool zCore::init_pipelines() {
+		VkShaderModule triangle_frag;
+		VkShaderModule triangle_vertex;
+		if (!load_shader_module("../shaders/triangle.frag.spv", &triangle_frag)) {
+			DBG("error with triangle fragment shader");
+		} else {
+			DBG("triangle fragment shader loaded");
+		}
+
+		if (!load_shader_module("../shaders/triangle.vert.spv", &triangle_vertex)) {
+			DBG("error with triangle vertex shader");
+		} else {
+			DBG("triangle vertex shader loaded");
+		}
 
 		return true;
 	}
@@ -332,11 +352,17 @@ namespace zebra {
 	}
 
 	bool zCore::load_shader_module(const char* file_path, VkShaderModule* out_shader) {
-		std::ifstream file(file_path, std::ios::ate | std::ios::binary);
-		if (!file.is_open()) return false;
+		std::filesystem::path file_path_std{ file_path };
 
-		auto filesize = file.tellg();
-		std::vector<uint32_t> buffer(filesize / sizeof(u32) + 1);
+		std::ifstream file(file_path, std::ios::ate | std::ios::binary);
+		if (!file.is_open()) {
+			DBG("couldnt open file");
+			return false;
+		}
+
+		std::error_code pos_error;
+		auto filesize = std::filesystem::file_size(file_path_std, pos_error);
+		std::vector<uint32_t> buffer(filesize / sizeof(u32));
 
 		file.seekg(0);
 		file.read((char*)buffer.data(), filesize);
