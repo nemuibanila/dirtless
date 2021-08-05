@@ -13,6 +13,7 @@
 
 #include "zebratypes.h"
 #include "g_types.h"
+#include "g_mesh.h"
 
 #define DBG(x) std::cerr<<"["<<__func__<<"]"<<x<<std::endl;
 
@@ -168,11 +169,13 @@ namespace zebra {
 
 	public:
 		VkPipelineLayout _triangle_pipeline_layout;
+		VkPipelineLayout _mesh_pipeline_layout;
 		VkPipeline _triangle_pipeline;
 		VkPipeline _colored_triangle_pipeline;
-		VkPipeline _meshPipeline;
-		Mesh _triangleMesh;
-		u32 _selectedShader = 0u;
+		VkPipeline _mesh_pipeline;
+		Mesh _triangle_mesh;
+		Mesh _monkey_mesh;
+		u32 _selected_shader = 0u;
 
 
 		zCore();

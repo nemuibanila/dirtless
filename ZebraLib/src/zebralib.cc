@@ -19,6 +19,11 @@
 #include "vki.h"
 #include "g_types.h"
 #include "g_pipeline.h"
+#include "g_mesh.h"
+#include <glm/glm.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/scalar_constants.hpp>
 
 namespace zebra {
 
@@ -37,9 +42,9 @@ namespace zebra {
 			this->die = true;
 		};
 		this->action_map[NEXT_SHADER] = [this]() {
-			_selectedShader++;
-			if (_selectedShader > 1) {
-				_selectedShader = 0;
+			_selected_shader++;
+			if (_selected_shader > 1) {
+				_selected_shader = 0;
 			}
 		};
 
@@ -349,6 +354,13 @@ namespace zebra {
 		} else {
 			DBG("colored triangle vertex shader loaded");
 		}
+		VkShaderModule mesh_triangle_vertex;
+		if (!load_shader_module("../shaders/tri_mesh.vert.spv", &mesh_triangle_vertex)) {
+			DBG("error with mesh vertex shader");
+		} else {
+			DBG("mesh vertex shader loaded");
+		}
+
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info = vki::pipeline_layout_create_info();
 		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &pipeline_layout_info, nullptr, &_triangle_pipeline_layout));
@@ -396,16 +408,47 @@ namespace zebra {
 		);
 
 		_colored_triangle_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
+		// mesh
+		pipeline_builder._shader_stages.clear();
+		auto mesh_pipeline_layout_info = vki::pipeline_layout_create_info();
+		VkPushConstantRange push_constant = {
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+			.offset = 0,
+			.size = sizeof(MeshPushConstants),
+		};
+		mesh_pipeline_layout_info.pushConstantRangeCount = 1;
+		mesh_pipeline_layout_info.pPushConstantRanges = &push_constant;
+		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &mesh_pipeline_layout_info, nullptr, &_mesh_pipeline_layout));
+
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
+		);
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, colored_triangle_frag)
+		);
+
+		auto vertex_description = P3N3C3::get_vertex_description();
+
+		pipeline_builder._vertex_input_info.vertexAttributeDescriptionCount = vertex_description.attributes.size();
+		pipeline_builder._vertex_input_info.pVertexAttributeDescriptions = vertex_description.attributes.data();
+		pipeline_builder._vertex_input_info.vertexBindingDescriptionCount = vertex_description.bindings.size();
+		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = vertex_description.bindings.data();
+		pipeline_builder._pipelineLayout = _mesh_pipeline_layout;
+
+		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
 
 		//cleanup
 		vkDestroyShaderModule(_vk.device(), triangle_frag, nullptr);
 		vkDestroyShaderModule(_vk.device(), triangle_vertex, nullptr);
 		vkDestroyShaderModule(_vk.device(), colored_triangle_frag, nullptr);
 		vkDestroyShaderModule(_vk.device(), colored_triangle_vertex, nullptr);
+		vkDestroyShaderModule(_vk.device(), mesh_triangle_vertex, nullptr);
 		main_delete_queue.push_function([=]() {
 			vkDestroyPipelineLayout(_vk.device(), _triangle_pipeline_layout, nullptr);
+			vkDestroyPipelineLayout(_vk.device(), _mesh_pipeline_layout, nullptr);
 			vkDestroyPipeline(_vk.device(), _triangle_pipeline, nullptr);
 			vkDestroyPipeline(_vk.device(), _colored_triangle_pipeline, nullptr);
+			vkDestroyPipeline(_vk.device(), _mesh_pipeline, nullptr);
 			});
 
 
@@ -500,18 +543,21 @@ namespace zebra {
 	}
 
 	void zCore::load_meshes() {
-		_triangleMesh._vertices.resize(3);
+		_triangle_mesh._vertices.resize(3);
 		//vertex positions
-		_triangleMesh._vertices[0].pos = { 1.f, 1.f, 0.0f };
-		_triangleMesh._vertices[1].pos = {-1.f, 1.f, 0.0f };
-		_triangleMesh._vertices[2].pos = { 0.f,-1.f, 0.0f };
+		_triangle_mesh._vertices[0].pos = { 1.f, 1.f, 0.0f };
+		_triangle_mesh._vertices[1].pos = {-1.f, 1.f, 0.0f };
+		_triangle_mesh._vertices[2].pos = { 0.f,-1.f, 0.0f };
 
 		//vertex colors, all green
-		_triangleMesh._vertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
-		_triangleMesh._vertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
-		_triangleMesh._vertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
+		_triangle_mesh._vertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
+		_triangle_mesh._vertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
+		_triangle_mesh._vertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
 
-		upload_mesh(_triangleMesh);
+		upload_mesh(_triangle_mesh);
+
+		_monkey_mesh.load_from_obj("../assets/monkey_smooth.obj");
+		upload_mesh(_monkey_mesh);
 	}
 
 	void zCore::upload_mesh(Mesh& mesh) {
@@ -539,7 +585,10 @@ namespace zebra {
 
 	void zCore::draw_loop(std::stop_token stoken) {
 		auto old_frame_start = std::chrono::steady_clock::now();
-		auto dt = 1.f / 60.f;
+
+		auto monitor = glfwGetPrimaryMonitor();
+		auto refresh_rate = glfwGetVideoMode(monitor)->refreshRate;
+		auto dt = 1.f / 100.f;
 		auto time_acc = 0.f;
 		double global_current_time = 0.0;
 
@@ -597,13 +646,34 @@ namespace zebra {
 					vkCmdBeginRenderPass(_vk.cmd_main, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
 
-					if (_selectedShader == 0) {
-						vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _triangle_pipeline);
-					} else if (_selectedShader == 1) {
-						vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _colored_triangle_pipeline);
-					}
+					vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
 
-					vkCmdDraw(_vk.cmd_main, 3, 1, 0, 0);
+					//bind the mesh vertex buffer with offset 0
+					VkDeviceSize offset = 0;
+					vkCmdBindVertexBuffers(_vk.cmd_main, 0, 1, &_monkey_mesh._vertex_buffer.buffer, &offset);
+					//make a model view matrix for rendering the object
+					//camera position
+					glm::vec3 camPos = { 0.f,0.f,-2.f };
+
+					glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
+					//camera projection
+					glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
+					projection[1][1] *= -1;
+					//model rotation
+					glm::mat4 model = glm::rotate(glm::mat4{ 1.0f }, glm::radians(25.f * (float)global_current_time), glm::vec3(0, 1, 0));
+
+					//calculate final mesh matrix
+					glm::mat4 mesh_matrix = projection * view * model;
+
+					MeshPushConstants constants;
+					constants.render_matrix = mesh_matrix;
+
+					//upload the matrix to the GPU via push constants
+					vkCmdPushConstants(_vk.cmd_main, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
+
+					//we can now draw the mesh
+					vkCmdDraw(_vk.cmd_main, _monkey_mesh._vertices.size(), 1, 0, 0);
+
 
 					vkCmdEndRenderPass(_vk.cmd_main);
 
