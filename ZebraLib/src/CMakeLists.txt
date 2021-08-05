@@ -12,7 +12,7 @@ add_executable (zebralib
 	zebralib.cc
 	zebratypes.h
  "g_pipeline.h"
- "g_pipeline.cc")
+ "g_pipeline.cc" "g_types.h")
 
 set_property(TARGET zebralib PROPERTY VS_DEBUFGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:zebralib")
 

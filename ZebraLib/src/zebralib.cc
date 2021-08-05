@@ -9,12 +9,16 @@
 #include <chrono>
 #include <VkBootstrap.h>
 #include <magic_enum.h>
-#include "g_pipeline.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define VMA_IMPLEMENTATION
+#include <vk_mem_alloc.h>
+
 #include "vki.h"
+#include "g_types.h"
+#include "g_pipeline.h"
 
 namespace zebra {
 
@@ -32,11 +36,23 @@ namespace zebra {
 		this->action_map[EXIT_PROGRAM] = [this]() {
 			this->die = true;
 		};
+		this->action_map[NEXT_SHADER] = [this]() {
+			_selectedShader++;
+			if (_selectedShader > 1) {
+				_selectedShader = 0;
+			}
+		};
+
 
 		KeyInput exit;
 		exit.key = Key{ GLFW_KEY_ESCAPE };
 		exit.action = InputAction::EXIT_PROGRAM;
 		this->key_inputs.push_back(exit);
+
+		KeyInput next_shader;
+		next_shader.key = Key{ GLFW_KEY_N };
+		next_shader.action = InputAction::NEXT_SHADER;
+		this->key_inputs.push_back(next_shader);
 
 		app_loop();
 		return true;
@@ -73,6 +89,10 @@ namespace zebra {
 		DBG("pipelines/shaders");
 		if (!this->init_pipelines()) return false;
 
+		DBG("-- resources");
+		DBG("meshes");
+		load_meshes();
+
 		return true;
 	}
 
@@ -82,7 +102,11 @@ namespace zebra {
 			VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
 		VK_CHECK(vkCreateCommandPool(_vk.device(), &poolinfo, nullptr, &_vk.command_pool));
-	
+		main_delete_queue.push_function([=]() {
+			vkDestroyCommandPool(_vk.device(), _vk.command_pool, nullptr);
+		}); 
+
+
 		auto cmd_info = vki::command_buffer_allocate_info(
 			_vk.command_pool);
 
@@ -123,6 +147,9 @@ namespace zebra {
 		};
 
 		VK_CHECK(vkCreateRenderPass(_vk.device(), &render_pass_info, nullptr, &_vk.renderpass));
+		main_delete_queue.push_function([=]() {
+			vkDestroyRenderPass(_vk.device(), _vk.renderpass, nullptr);
+			});
 		return true;
 	}
 
@@ -141,15 +168,20 @@ namespace zebra {
 			.layers = 1,
 		};
 
-		const u32 swapchain_imagecount = _window.vkb_swapchain.image_count;
-		auto swapchain_imageviews = _window.vkb_swapchain.get_image_views().value();
-		_vk.framebuffers = std::vector<VkFramebuffer>(swapchain_imagecount);
+		const u32 swapchain_imagecount = _vk.image_views.size();
+		auto swapchain_imageviews = _vk.image_views;
+		_vk.framebuffers = std::vector<VkFramebuffer>(_vk.image_views.size());
 
-		for (auto i = 0; i < swapchain_imagecount; i++) {
+		for (auto i = 0u; i < swapchain_imagecount; i++) {
 			fb_info.pAttachments = &swapchain_imageviews[i];
 			VK_CHECK(vkCreateFramebuffer(_vk.device(), &fb_info, nullptr, &_vk.framebuffers[i]));
+			main_delete_queue.push_function([=]() {
+				vkDestroyFramebuffer(_vk.device(), _vk.framebuffers[i], nullptr);
+				});
 		}
 
+
+		return true;
 	}
 
 	bool zCore::init_sync() {
@@ -193,6 +225,14 @@ namespace zebra {
 		}
 
 		_window.vkb_swapchain = swap_ret.value(); 
+		_vk.images = _window.vkb_swapchain.get_images().value();
+		_vk.image_views = _window.vkb_swapchain.get_image_views().value();
+		main_delete_queue.push_function([=]() {
+			for (auto i = 0u; i < _vk.image_views.size(); i++) {
+				vkDestroyImageView(_vk.device(), _vk.image_views[i], nullptr);
+			}
+			vkb::destroy_swapchain(_window.vkb_swapchain);
+			});
 		return true;
 	}
 
@@ -266,8 +306,18 @@ namespace zebra {
 			return false;
 		}
 		_vk.graphics_queue = graphics_queue_ret.value();
-		DBG("complete and ready to use.");
 
+		VmaAllocatorCreateInfo allocate_info = {
+			.physicalDevice = _vk.vkb_device.physical_device.physical_device,
+			.device = _vk.device(),
+			.instance = _vk.instance(),
+		};
+		vmaCreateAllocator(&allocate_info, &_vk.allocator);
+		main_delete_queue.push_function([=]() {
+			vmaDestroyAllocator(_vk.allocator);
+		});
+
+		DBG("complete and ready to use.");
 		return true;
 	}
 
@@ -284,6 +334,20 @@ namespace zebra {
 			DBG("error with triangle vertex shader");
 		} else {
 			DBG("triangle vertex shader loaded");
+		}
+
+		VkShaderModule colored_triangle_frag;
+		VkShaderModule colored_triangle_vertex;
+		if (!load_shader_module("../shaders/colored_triangle.frag.spv", &colored_triangle_frag)) {
+			DBG("error with colored triangle fragment shader");
+		} else {
+			DBG("colored triangle fragment shader loaded");
+		}
+
+		if (!load_shader_module("../shaders/colored_triangle.vert.spv", &colored_triangle_vertex)) {
+			DBG("error with triangle vertex shader");
+		} else {
+			DBG("colored triangle vertex shader loaded");
 		}
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info = vki::pipeline_layout_create_info();
@@ -320,27 +384,43 @@ namespace zebra {
 		pipeline_builder._pipelineLayout = _triangle_pipeline_layout;
 		
 		_triangle_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
+		
+		// colored triangle
+		pipeline_builder._shader_stages.clear();
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, colored_triangle_vertex)
+		);
+
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, colored_triangle_frag)
+		);
+
+		_colored_triangle_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
+
+		//cleanup
+		vkDestroyShaderModule(_vk.device(), triangle_frag, nullptr);
+		vkDestroyShaderModule(_vk.device(), triangle_vertex, nullptr);
+		vkDestroyShaderModule(_vk.device(), colored_triangle_frag, nullptr);
+		vkDestroyShaderModule(_vk.device(), colored_triangle_vertex, nullptr);
+		main_delete_queue.push_function([=]() {
+			vkDestroyPipelineLayout(_vk.device(), _triangle_pipeline_layout, nullptr);
+			vkDestroyPipeline(_vk.device(), _triangle_pipeline, nullptr);
+			vkDestroyPipeline(_vk.device(), _colored_triangle_pipeline, nullptr);
+			});
+
+
 		return true;
 	}
 
 	bool zCore::cleanup() {
+		vkQueueWaitIdle(_vk.graphics_queue);
+		main_delete_queue.flush();
 
-		vkDestroyCommandPool(_vk.device(), _vk.command_pool, nullptr);
-		
-		
-		vkb::destroy_swapchain(_window.vkb_swapchain);
-		vkDestroyRenderPass(_vk.device(), _vk.renderpass, nullptr);
-		
-		for (auto i = 0u; i < _vk.framebuffers.size(); i++) {
-			vkDestroyFramebuffer(_vk.device(), _vk.framebuffers[i], nullptr);
-		}
-
-		vkb::destroy_device(_vk.vkb_device);
 		vkb::destroy_surface(_vk.vkb_instance, _window.surface);
+		vkb::destroy_device(_vk.vkb_device);
 		vkb::destroy_instance(_vk.vkb_instance);
 
 		glfwDestroyWindow(_window.handle);
-		glfwTerminate();
 		return true;
 	}
 
@@ -419,6 +499,44 @@ namespace zebra {
 		return true;
 	}
 
+	void zCore::load_meshes() {
+		_triangleMesh._vertices.resize(3);
+		//vertex positions
+		_triangleMesh._vertices[0].pos = { 1.f, 1.f, 0.0f };
+		_triangleMesh._vertices[1].pos = {-1.f, 1.f, 0.0f };
+		_triangleMesh._vertices[2].pos = { 0.f,-1.f, 0.0f };
+
+		//vertex colors, all green
+		_triangleMesh._vertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
+		_triangleMesh._vertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
+		_triangleMesh._vertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
+
+		upload_mesh(_triangleMesh);
+	}
+
+	void zCore::upload_mesh(Mesh& mesh) {
+		VkBufferCreateInfo buffer_info = {
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = mesh._vertices.size() * sizeof(mesh._vertices[0]),
+			.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		};
+
+		VmaAllocationCreateInfo vma_alloc_info = {
+			.usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+		};
+
+		VK_CHECK(vmaCreateBuffer(_vk.allocator, &buffer_info, &vma_alloc_info, &mesh._vertex_buffer.buffer, &mesh._vertex_buffer.allocation, nullptr));
+
+		main_delete_queue.push_function([=]() {
+			vmaDestroyBuffer(_vk.allocator, mesh._vertex_buffer.buffer, mesh._vertex_buffer.allocation);
+			});
+
+		void* data;
+		vmaMapMemory(_vk.allocator, mesh._vertex_buffer.allocation, &data);
+		memcpy(data, mesh._vertices.data(), mesh._vertices.size() * sizeof(mesh._vertices[0]));
+		vmaUnmapMemory(_vk.allocator, mesh._vertex_buffer.allocation);
+	}
+
 	void zCore::draw_loop(std::stop_token stoken) {
 		auto old_frame_start = std::chrono::steady_clock::now();
 		auto dt = 1.f / 60.f;
@@ -478,7 +596,13 @@ namespace zebra {
 
 					vkCmdBeginRenderPass(_vk.cmd_main, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-					vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _triangle_pipeline);
+
+					if (_selectedShader == 0) {
+						vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _triangle_pipeline);
+					} else if (_selectedShader == 1) {
+						vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _colored_triangle_pipeline);
+					}
+
 					vkCmdDraw(_vk.cmd_main, 3, 1, 0, 0);
 
 					vkCmdEndRenderPass(_vk.cmd_main);
@@ -539,9 +663,11 @@ namespace zebra {
 			}
 
 			glfwPollEvents();
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			std::this_thread::yield();
 		}
 
 		draw_thread.request_stop();
+		draw_thread.join();
+		this->cleanup();
 	}
 }

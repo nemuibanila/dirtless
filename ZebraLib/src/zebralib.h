@@ -1,5 +1,4 @@
 #pragma once
-#include "zebratypes.h"
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <VkBootstrap.h>
@@ -11,6 +10,9 @@
 #include <set>
 #include <thread>
 #include <chrono>
+
+#include "zebratypes.h"
+#include "g_types.h"
 
 #define DBG(x) std::cerr<<"["<<__func__<<"]"<<x<<std::endl;
 
@@ -40,7 +42,11 @@ namespace zebra {
 
 		VkCommandBuffer cmd_main;
 		VkRenderPass renderpass;
+		VmaAllocator allocator;
+
 		std::vector<VkFramebuffer> framebuffers;
+		std::vector<VkImageView> image_views;
+		std::vector<VkImage> images;
 	};
 
 	struct Window {
@@ -50,9 +56,26 @@ namespace zebra {
 		VkSwapchainKHR& swapchain() {
 			return vkb_swapchain.swapchain;
 		}
+
 	};
 
+	struct DeletionQueue
+	{
+		std::deque<std::function<void()>> deletors;
 
+		void push_function(std::function<void()>&& function) {
+			deletors.push_back(function);
+		}
+
+		void flush() {
+			// reverse iterate the deletion queue to execute all the functions
+			for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+				(*it)(); //call the function
+			}
+
+			deletors.clear();
+		}
+	};
 
 	enum InputAction {
 #include "input_actions.strings"
@@ -104,6 +127,7 @@ namespace zebra {
 		VulkanNative _vk;
 		VulkanSync _sync;
 		Window _window;
+		DeletionQueue main_delete_queue;
 
 		bool die = false;
 
@@ -136,6 +160,8 @@ namespace zebra {
 		
 		void app_loop();
 		void draw_loop(std::stop_token stoken);
+		void load_meshes();
+		void upload_mesh(Mesh& mesh);
 
 		// helpers
 		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
@@ -143,6 +169,11 @@ namespace zebra {
 	public:
 		VkPipelineLayout _triangle_pipeline_layout;
 		VkPipeline _triangle_pipeline;
+		VkPipeline _colored_triangle_pipeline;
+		VkPipeline _meshPipeline;
+		Mesh _triangleMesh;
+		u32 _selectedShader = 0u;
+
 
 		zCore();
 		virtual ~zCore();
