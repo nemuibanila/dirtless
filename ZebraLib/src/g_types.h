@@ -4,8 +4,13 @@
 #include <glm/glm.hpp>
 
 namespace zebra {
-	struct AllocatedBuffer {
+	struct AllocBuffer {
 		VkBuffer buffer;
+		VmaAllocation allocation;
+	};
+
+	struct AllocImage {
+		VkImage image;
 		VmaAllocation allocation;
 	};
 

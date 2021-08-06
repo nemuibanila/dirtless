@@ -13,6 +13,7 @@ namespace zebra {
 		VkRect2D _scissor;
 		VkPipelineRasterizationStateCreateInfo _rasterizer;
 		VkPipelineColorBlendAttachmentState _color_blend_attachment;
+		VkPipelineDepthStencilStateCreateInfo _depth_stencil;
 		VkPipelineMultisampleStateCreateInfo _multisampling;
 		VkPipelineLayout _pipelineLayout;
 

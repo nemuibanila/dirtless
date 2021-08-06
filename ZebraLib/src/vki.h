@@ -2,7 +2,7 @@
 #include <vulkan/vulkan.h>
 
 namespace vki {
-	VkCommandPoolCreateInfo command_pool_create_info(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags flags = 0) {
+	constexpr VkCommandPoolCreateInfo command_pool_create_info(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags flags = 0) {
 		return VkCommandPoolCreateInfo{
 			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 			.pNext = nullptr,
@@ -11,7 +11,7 @@ namespace vki {
 		};
 	}
 
-	VkCommandBufferAllocateInfo command_buffer_allocate_info(VkCommandPool pool, u32 count = 1, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY) {
+	constexpr VkCommandBufferAllocateInfo command_buffer_allocate_info(VkCommandPool pool, u32 count = 1, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY) {
 		return VkCommandBufferAllocateInfo{
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 			.pNext = nullptr,
@@ -21,7 +21,7 @@ namespace vki {
 		};
 	}
 
-	VkPipelineShaderStageCreateInfo pipeline_shader_stage_create_info(VkShaderStageFlagBits stage, VkShaderModule shaderModule) {
+	constexpr VkPipelineShaderStageCreateInfo pipeline_shader_stage_create_info(VkShaderStageFlagBits stage, VkShaderModule shaderModule) {
 		VkPipelineShaderStageCreateInfo info{};
 		info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		info.pNext = nullptr;
@@ -32,7 +32,7 @@ namespace vki {
 		return info;
 	}
 
-	VkPipelineInputAssemblyStateCreateInfo input_assembly_create_info(VkPrimitiveTopology topology) {
+	constexpr VkPipelineInputAssemblyStateCreateInfo input_assembly_create_info(VkPrimitiveTopology topology) {
 		VkPipelineInputAssemblyStateCreateInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
 		info.pNext = nullptr;
@@ -43,7 +43,7 @@ namespace vki {
 		return info;
 	}
 
-	VkPipelineRasterizationStateCreateInfo rasterization_state_create_info(VkPolygonMode polygonMode) {
+	constexpr VkPipelineRasterizationStateCreateInfo rasterization_state_create_info(VkPolygonMode polygonMode) {
 		VkPipelineRasterizationStateCreateInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
 		info.pNext = nullptr;
@@ -66,7 +66,7 @@ namespace vki {
 		return info;
 	}
 
-	VkPipelineMultisampleStateCreateInfo multisampling_state_create_info()
+	constexpr VkPipelineMultisampleStateCreateInfo multisampling_state_create_info()
 	{
 		VkPipelineMultisampleStateCreateInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -82,7 +82,7 @@ namespace vki {
 		return info;
 	}
 
-	VkPipelineColorBlendAttachmentState color_blend_attachment_state() {
+	constexpr VkPipelineColorBlendAttachmentState color_blend_attachment_state() {
 		VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
 		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
 			VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -90,7 +90,7 @@ namespace vki {
 		return colorBlendAttachment;
 	}
 
-	VkPipelineLayoutCreateInfo pipeline_layout_create_info() {
+	constexpr VkPipelineLayoutCreateInfo pipeline_layout_create_info() {
 		VkPipelineLayoutCreateInfo create_info = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 			.pNext = nullptr,
@@ -103,7 +103,7 @@ namespace vki {
 		return create_info;
 	}
 
-	VkPipelineVertexInputStateCreateInfo vertex_input_state_create_info() {
+	constexpr VkPipelineVertexInputStateCreateInfo vertex_input_state_create_info() {
 		VkPipelineVertexInputStateCreateInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 		info.pNext = nullptr;
@@ -114,4 +114,55 @@ namespace vki {
 		return info;
 	}
 
+	constexpr VkImageCreateInfo image_create_info(VkFormat format, VkImageUsageFlags usage_flags, VkExtent3D extent) {
+		VkImageCreateInfo info = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.pNext = nullptr,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = format,
+			.extent = extent,
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = usage_flags,
+		};
+
+		return info;
+	}
+
+	constexpr VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, VkImageAspectFlags aspect_flags) {
+		VkImageViewCreateInfo info = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.pNext = nullptr,
+			.image = image,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = format,
+			.subresourceRange = {
+				.aspectMask = aspect_flags,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
+
+		return info;
+	}
+
+	constexpr VkPipelineDepthStencilStateCreateInfo depth_stencil_create_info(bool bdepth_test, bool bdepth_write, VkCompareOp compare_op) {
+		VkPipelineDepthStencilStateCreateInfo info = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+			.pNext = nullptr,
+			.depthTestEnable = bdepth_test ? VK_TRUE : VK_FALSE,
+			.depthWriteEnable = bdepth_write ? VK_TRUE : VK_FALSE,
+			.depthCompareOp = bdepth_test ? compare_op : VK_COMPARE_OP_ALWAYS,
+			.depthBoundsTestEnable = VK_FALSE,
+			.stencilTestEnable = VK_FALSE,
+			.minDepthBounds = 0.0f,
+			.maxDepthBounds = 1.0f,
+		};
+
+		return info;
+	}
 }

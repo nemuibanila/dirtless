@@ -35,6 +35,7 @@ namespace zebra {
 			.pViewportState = &viewport_state,
 			.pRasterizationState = &_rasterizer,
 			.pMultisampleState = &_multisampling,
+			.pDepthStencilState = &_depth_stencil,
 			.pColorBlendState = &color_blending,
 			.layout = _pipelineLayout,
 			.renderPass = pass,

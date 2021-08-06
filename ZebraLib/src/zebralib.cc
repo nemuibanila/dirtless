@@ -34,6 +34,7 @@ namespace zebra {
 
 	bool zCore::start_application() {
 		if (!init_gfx()) return false;
+		init_scene();
 
 		glfwSetWindowUserPointer(_window.handle, this);
 		glfwSetKeyCallback(_window.handle, zCore::_glfw_key_callback_caller);
@@ -107,7 +108,7 @@ namespace zebra {
 			VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
 		VK_CHECK(vkCreateCommandPool(_vk.device(), &poolinfo, nullptr, &_vk.command_pool));
-		main_delete_queue.push_function([=]() {
+		main_delq.push_function([=]() {
 			vkDestroyCommandPool(_vk.device(), _vk.command_pool, nullptr);
 		}); 
 
@@ -137,22 +138,41 @@ namespace zebra {
 			.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		};
 
+		VkAttachmentDescription depth_attachment = {
+			.flags = 0,
+			.format = _vk.depth_format,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		};
+
+		VkAttachmentReference depth_attachment_ref = {
+			.attachment = 1,
+			.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		};
+
 		VkSubpassDescription subpass = {
 			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 			.colorAttachmentCount = 1,
 			.pColorAttachments = &color_attachment_ref,
+			.pDepthStencilAttachment = &depth_attachment_ref,
 		};
 
+		auto attachments = { color_attachment, depth_attachment };
 		VkRenderPassCreateInfo render_pass_info = {
 			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-			.attachmentCount = 1,
-			.pAttachments = &color_attachment,
+			.attachmentCount = (u32)attachments.size(),
+			.pAttachments = attachments.begin(),
 			.subpassCount = 1,
 			.pSubpasses = &subpass,
 		};
 
 		VK_CHECK(vkCreateRenderPass(_vk.device(), &render_pass_info, nullptr, &_vk.renderpass));
-		main_delete_queue.push_function([=]() {
+		main_delq.push_function([=]() {
 			vkDestroyRenderPass(_vk.device(), _vk.renderpass, nullptr);
 			});
 		return true;
@@ -178,9 +198,11 @@ namespace zebra {
 		_vk.framebuffers = std::vector<VkFramebuffer>(_vk.image_views.size());
 
 		for (auto i = 0u; i < swapchain_imagecount; i++) {
-			fb_info.pAttachments = &swapchain_imageviews[i];
+			auto attachments = { swapchain_imageviews[i], _vk.depth_image_view };
+			fb_info.attachmentCount = attachments.size();
+			fb_info.pAttachments = attachments.begin();
 			VK_CHECK(vkCreateFramebuffer(_vk.device(), &fb_info, nullptr, &_vk.framebuffers[i]));
-			main_delete_queue.push_function([=]() {
+			main_delq.push_function([=]() {
 				vkDestroyFramebuffer(_vk.device(), _vk.framebuffers[i], nullptr);
 				});
 		}
@@ -206,6 +228,13 @@ namespace zebra {
 
 		VK_CHECK(vkCreateSemaphore(_vk.device(), &semaphore_info, nullptr, &_sync.presentS));
 		VK_CHECK(vkCreateSemaphore(_vk.device(), &semaphore_info, nullptr, &_sync.renderS));
+		main_delq.push_function([=]() {
+			vkDestroyFence(_vk.device(), _sync.renderF, nullptr);
+			vkDestroySemaphore(_vk.device(), _sync.renderS, nullptr);
+			vkDestroySemaphore(_vk.device(), _sync.presentS, nullptr);
+
+			});
+
 		return true;
 	}
 
@@ -223,7 +252,9 @@ namespace zebra {
 
 	bool zCore::init_swapchain() {
 		vkb::SwapchainBuilder swapchain_builder{ _vk.vkb_device };
-		auto swap_ret = swapchain_builder.build();
+		auto swap_ret = swapchain_builder
+			.use_default_present_mode_selection()
+			.build();
 		if (!swap_ret) {
 			DBG("creation failed. " << swap_ret.error().message());
 			return false;
@@ -232,12 +263,35 @@ namespace zebra {
 		_window.vkb_swapchain = swap_ret.value(); 
 		_vk.images = _window.vkb_swapchain.get_images().value();
 		_vk.image_views = _window.vkb_swapchain.get_image_views().value();
-		main_delete_queue.push_function([=]() {
+		main_delq.push_function([=]() {
 			for (auto i = 0u; i < _vk.image_views.size(); i++) {
 				vkDestroyImageView(_vk.device(), _vk.image_views[i], nullptr);
 			}
 			vkb::destroy_swapchain(_window.vkb_swapchain);
 			});
+
+		VkExtent3D depth_image_extent = {
+			.width = _window.extent().width,
+			.height = _window.extent().height,
+			.depth = 1,
+		};
+
+		_vk.depth_format = VK_FORMAT_D32_SFLOAT;
+		VkImageCreateInfo depth_image_info = vki::image_create_info(_vk.depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_image_extent);
+		VmaAllocationCreateInfo depth_image_allocinfo = {
+			.usage = VMA_MEMORY_USAGE_GPU_ONLY,
+			.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+		};
+
+		vmaCreateImage(_vk.allocator, &depth_image_info, &depth_image_allocinfo, &_vk.depth_image.image, &_vk.depth_image.allocation, nullptr);
+		VkImageViewCreateInfo depth_view_info = vki::imageview_create_info(_vk.depth_format, _vk.depth_image.image, VK_IMAGE_ASPECT_DEPTH_BIT);
+		VK_CHECK(vkCreateImageView(_vk.device(), &depth_view_info, nullptr, &_vk.depth_image_view));
+
+		main_delq.push_function([=]() {
+			vkDestroyImageView(_vk.device(), _vk.depth_image_view, nullptr);
+			vmaDestroyImage(_vk.allocator, _vk.depth_image.image, _vk.depth_image.allocation);
+		});
+
 		return true;
 	}
 
@@ -318,7 +372,7 @@ namespace zebra {
 			.instance = _vk.instance(),
 		};
 		vmaCreateAllocator(&allocate_info, &_vk.allocator);
-		main_delete_queue.push_function([=]() {
+		main_delq.push_function([=]() {
 			vmaDestroyAllocator(_vk.allocator);
 		});
 
@@ -393,6 +447,7 @@ namespace zebra {
 		pipeline_builder._rasterizer = vki::rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 		pipeline_builder._multisampling = vki::multisampling_state_create_info();
 		pipeline_builder._color_blend_attachment = vki::color_blend_attachment_state();
+		pipeline_builder._depth_stencil = vki::depth_stencil_create_info(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
 		pipeline_builder._pipelineLayout = _triangle_pipeline_layout;
 		
 		_triangle_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
@@ -436,6 +491,7 @@ namespace zebra {
 		pipeline_builder._pipelineLayout = _mesh_pipeline_layout;
 
 		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
+		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
 
 		//cleanup
 		vkDestroyShaderModule(_vk.device(), triangle_frag, nullptr);
@@ -443,7 +499,7 @@ namespace zebra {
 		vkDestroyShaderModule(_vk.device(), colored_triangle_frag, nullptr);
 		vkDestroyShaderModule(_vk.device(), colored_triangle_vertex, nullptr);
 		vkDestroyShaderModule(_vk.device(), mesh_triangle_vertex, nullptr);
-		main_delete_queue.push_function([=]() {
+		main_delq.push_function([=]() {
 			vkDestroyPipelineLayout(_vk.device(), _triangle_pipeline_layout, nullptr);
 			vkDestroyPipelineLayout(_vk.device(), _mesh_pipeline_layout, nullptr);
 			vkDestroyPipeline(_vk.device(), _triangle_pipeline, nullptr);
@@ -455,9 +511,31 @@ namespace zebra {
 		return true;
 	}
 
+	void zCore::init_scene() {
+		RenderObject monkey;
+		monkey.mesh = get_mesh("monkey");
+		monkey.material = get_material("defaultmesh");
+		monkey.transform = glm::mat4{ 1.0f };
+
+		_renderables.push_back(monkey);
+		for (int x = -20; x <= 20; x++) {
+			for (int y = -20; y <= 20; y++) {
+
+				RenderObject tri;
+				tri.mesh = get_mesh("triangle");
+				tri.material = get_material("defaultmesh");
+				glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x, 0, y));
+				glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
+				tri.transform = translation * scale;
+
+				_renderables.push_back(tri);
+			}
+		}
+	}
+
 	bool zCore::cleanup() {
 		vkQueueWaitIdle(_vk.graphics_queue);
-		main_delete_queue.flush();
+		main_delq.flush();
 
 		vkb::destroy_surface(_vk.vkb_instance, _window.surface);
 		vkb::destroy_device(_vk.vkb_device);
@@ -504,6 +582,7 @@ namespace zebra {
 	bool zCore::is_key_held(const Key& k) {
 		return glfwGetKey(_window.handle, k.keycode);
 	}
+
 
 	void zCore::process_key_inputs() {
 
@@ -558,6 +637,9 @@ namespace zebra {
 
 		_monkey_mesh.load_from_obj("../assets/monkey_smooth.obj");
 		upload_mesh(_monkey_mesh);
+
+		_meshes["monkey"] = _monkey_mesh;
+		_meshes["triangle"] = _triangle_mesh;
 	}
 
 	void zCore::upload_mesh(Mesh& mesh) {
@@ -573,7 +655,7 @@ namespace zebra {
 
 		VK_CHECK(vmaCreateBuffer(_vk.allocator, &buffer_info, &vma_alloc_info, &mesh._vertex_buffer.buffer, &mesh._vertex_buffer.allocation, nullptr));
 
-		main_delete_queue.push_function([=]() {
+		main_delq.push_function([=]() {
 			vmaDestroyBuffer(_vk.allocator, mesh._vertex_buffer.buffer, mesh._vertex_buffer.allocation);
 			});
 
@@ -582,6 +664,28 @@ namespace zebra {
 		memcpy(data, mesh._vertices.data(), mesh._vertices.size() * sizeof(mesh._vertices[0]));
 		vmaUnmapMemory(_vk.allocator, mesh._vertex_buffer.allocation);
 	}
+
+	Material* zCore::create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name) {
+		Material mat{
+			.pipeline = pipeline,
+			.pipeline_layout = layout,
+		};
+		_materials[name] = mat;
+		return &_materials[name];
+	}
+
+	Material* zCore::get_material(const std::string& name) {
+		auto it = _materials.find(name);
+		if (it == _materials.end()) return nullptr;
+		else return &(*it).second;
+	}
+
+	Mesh* zCore::get_mesh(const std::string& name) {
+		auto it = _meshes.find(name);
+		if (it == _meshes.end()) return nullptr;
+		else return &(*it).second;
+	}
+
 
 	void zCore::draw_loop(std::stop_token stoken) {
 		auto old_frame_start = std::chrono::steady_clock::now();
@@ -601,7 +705,7 @@ namespace zebra {
 
 			if (time_acc > dt) {
 				// do time step
-				DBG("time step! " << time_acc);
+				DBG("animation time step! " << time_acc);
 				time_acc -= dt;
 				global_current_time += dt;
 			}
@@ -627,6 +731,11 @@ namespace zebra {
 					float flash = abs(sin(global_current_time));
 					clear_value.color = { {0.f, 0.f, flash, 1.f} };
 
+					VkClearValue depth_clear;
+					depth_clear.depthStencil.depth = 1.f;
+
+					auto clear_values = { clear_value, depth_clear };
+
 					VkRenderPassBeginInfo rp_info = {
 						.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 						.pNext = nullptr,
@@ -639,41 +748,13 @@ namespace zebra {
 					},
 					.extent = _window.vkb_swapchain.extent,
 					},
-					.clearValueCount = 1,
-					.pClearValues = &clear_value,
+					.clearValueCount = (u32)clear_values.size(),
+					.pClearValues = clear_values.begin(),
 					};
 
 					vkCmdBeginRenderPass(_vk.cmd_main, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-
-					vkCmdBindPipeline(_vk.cmd_main, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
-
-					//bind the mesh vertex buffer with offset 0
-					VkDeviceSize offset = 0;
-					vkCmdBindVertexBuffers(_vk.cmd_main, 0, 1, &_monkey_mesh._vertex_buffer.buffer, &offset);
-					//make a model view matrix for rendering the object
-					//camera position
-					glm::vec3 camPos = { 0.f,0.f,-2.f };
-
-					glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
-					//camera projection
-					glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
-					projection[1][1] *= -1;
-					//model rotation
-					glm::mat4 model = glm::rotate(glm::mat4{ 1.0f }, glm::radians(25.f * (float)global_current_time), glm::vec3(0, 1, 0));
-
-					//calculate final mesh matrix
-					glm::mat4 mesh_matrix = projection * view * model;
-
-					MeshPushConstants constants;
-					constants.render_matrix = mesh_matrix;
-
-					//upload the matrix to the GPU via push constants
-					vkCmdPushConstants(_vk.cmd_main, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
-
-					//we can now draw the mesh
-					vkCmdDraw(_vk.cmd_main, _monkey_mesh._vertices.size(), 1, 0, 0);
-
+					draw_objects(_vk.cmd_main, std::span<RenderObject>(_renderables.data(), _renderables.size()));
 
 					vkCmdEndRenderPass(_vk.cmd_main);
 
@@ -716,6 +797,39 @@ namespace zebra {
 			old_frame_start = start_frame;
 			std::this_thread::yield();
 		};
+	}
+
+	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
+		glm::vec3 cam_pos = { 0.f, -6.f, -10.f };
+		glm::mat4 view = glm::translate(glm::mat4(1.f), cam_pos);
+		glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
+		projection[1][1] *= -1; // for vulkan coordinates
+
+		Mesh* last_mesh = nullptr;
+		Material* last_material = nullptr;
+		for (size_t i = 0; i < render_objects.size(); i++) {
+			RenderObject& object = render_objects[i];
+			if (object.material != last_material) {
+				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
+				last_material = object.material;
+			}
+
+			glm::mat4 model = object.transform;
+			glm::mat4 pvm = projection * view * model;
+
+			MeshPushConstants constants;
+			constants.render_matrix = pvm;
+			vkCmdPushConstants(cmd, object.material->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(constants), &constants);
+
+			if (object.mesh != last_mesh) {
+				VkDeviceSize offset = 0;
+				vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->_vertex_buffer.buffer, &offset);
+				last_mesh = object.mesh;
+			}
+
+			vkCmdDraw(cmd, object.mesh->_vertices.size(), 1, 0, 0);
+		}
+
 	}
 
 	// APP

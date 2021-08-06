@@ -10,6 +10,7 @@
 #include <set>
 #include <thread>
 #include <chrono>
+#include <span>
 
 #include "zebratypes.h"
 #include "g_types.h"
@@ -48,6 +49,10 @@ namespace zebra {
 		std::vector<VkFramebuffer> framebuffers;
 		std::vector<VkImageView> image_views;
 		std::vector<VkImage> images;
+
+		VkImageView depth_image_view;
+		AllocImage depth_image;
+		VkFormat depth_format;
 	};
 
 	struct Window {
@@ -57,6 +62,10 @@ namespace zebra {
 		VkSwapchainKHR& swapchain() {
 			return vkb_swapchain.swapchain;
 		}
+
+		VkExtent2D extent() const {
+			return vkb_swapchain.extent;
+		};
 
 	};
 
@@ -128,7 +137,7 @@ namespace zebra {
 		VulkanNative _vk;
 		VulkanSync _sync;
 		Window _window;
-		DeletionQueue main_delete_queue;
+		DeletionQueue main_delq;
 
 		bool die = false;
 
@@ -156,23 +165,35 @@ namespace zebra {
 		bool init_framebuffers();
 		bool init_sync();
 		bool init_pipelines();
+		void init_scene();
 		bool recreate_swapchain();
 		bool create_window();
 		
 		void app_loop();
 		void draw_loop(std::stop_token stoken);
+		void draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects);
 		void load_meshes();
-		void upload_mesh(Mesh& mesh);
 
 		// helpers
-		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
+
 
 	public:
+		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
+		void upload_mesh(Mesh& mesh);
+		Material* create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name);
+		Material* get_material(const std::string& name);
+		Mesh* get_mesh(const std::string& name);
+
 		VkPipelineLayout _triangle_pipeline_layout;
 		VkPipelineLayout _mesh_pipeline_layout;
 		VkPipeline _triangle_pipeline;
 		VkPipeline _colored_triangle_pipeline;
 		VkPipeline _mesh_pipeline;
+
+		std::vector<RenderObject> _renderables;
+		std::unordered_map<std::string, Material> _materials;
+		std::unordered_map<std::string, Mesh> _meshes;
+
 		Mesh _triangle_mesh;
 		Mesh _monkey_mesh;
 		u32 _selected_shader = 0u;
