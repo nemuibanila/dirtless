@@ -25,6 +25,15 @@ namespace zebra {
 			.pAttachments = &_color_blend_attachment,
 		};
 
+		auto dynamic_states = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+
+		VkPipelineDynamicStateCreateInfo dynamic_info = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+			.pNext = nullptr,
+			.dynamicStateCount = (u32) dynamic_states.size(),
+			.pDynamicStates = dynamic_states.begin(),
+		};
+
 		VkGraphicsPipelineCreateInfo pipeline_info = {
 			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 			.pNext = nullptr,
@@ -37,11 +46,14 @@ namespace zebra {
 			.pMultisampleState = &_multisampling,
 			.pDepthStencilState = &_depth_stencil,
 			.pColorBlendState = &color_blending,
+			.pDynamicState = &dynamic_info,
 			.layout = _pipelineLayout,
 			.renderPass = pass,
 			.subpass = 0,
 			.basePipelineHandle = VK_NULL_HANDLE,
 		};
+
+
 
 		VkPipeline new_pipeline;
 		auto result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &new_pipeline);

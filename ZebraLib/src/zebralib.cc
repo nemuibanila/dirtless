@@ -42,12 +42,6 @@ namespace zebra {
 		this->action_map[EXIT_PROGRAM] = [this]() {
 			this->die = true;
 		};
-		this->action_map[NEXT_SHADER] = [this]() {
-			_selected_shader++;
-			if (_selected_shader > 1) {
-				_selected_shader = 0;
-			}
-		};
 
 
 		KeyInput exit;
@@ -80,8 +74,8 @@ namespace zebra {
 		DBG("swapchain");
 		if (!this->init_swapchain()) return false;
 
-		DBG("command pool");
-		if (!this->init_commands()) return false;
+		DBG("per frame data");
+		if (!this->init_per_frame_data()) return false;
 
 		DBG("render pass");
 		if (!this->init_default_renderpass()) return false;
@@ -89,8 +83,6 @@ namespace zebra {
 		DBG("framebuffers");
 		if (!this->init_framebuffers()) return false;
 
-		DBG("sync");
-		if (!this->init_sync()) return false;
 
 		DBG("pipelines/shaders");
 		if (!this->init_pipelines()) return false;
@@ -102,22 +94,41 @@ namespace zebra {
 		return true;
 	}
 
-	bool zCore::init_commands() {
+	bool zCore::init_per_frame_data() {
+		VkFenceCreateInfo fence_info = {
+			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+		};
+
+
+		VkSemaphoreCreateInfo semaphore_info = {
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+		};
+
 		auto poolinfo = vki::command_pool_create_info(
 			_vk.vkb_device.get_queue_index(vkb::QueueType::graphics).value(),
 			VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
-		VK_CHECK(vkCreateCommandPool(_vk.device(), &poolinfo, nullptr, &_vk.command_pool));
-		main_delq.push_function([=]() {
-			vkDestroyCommandPool(_vk.device(), _vk.command_pool, nullptr);
-		}); 
+		for (auto i = 0u; i < frames.size(); i++) {
+			VK_CHECK(vkCreateCommandPool(_vk.device(), &poolinfo, nullptr, &frames[i].pool));
+			auto cmd_info = vki::command_buffer_allocate_info(
+				frames[i].pool);
 
+			VK_CHECK(vkAllocateCommandBuffers(_vk.device(), &cmd_info, &frames[i].buf));
+			VK_CHECK(vkCreateFence(_vk.device(), &fence_info, nullptr, &frames[i].renderF));
+			VK_CHECK(vkCreateSemaphore(_vk.device(), &semaphore_info, nullptr, &frames[i].presentS));
+			VK_CHECK(vkCreateSemaphore(_vk.device(), &semaphore_info, nullptr, &frames[i].renderS));
+			swapchain_delq.push_function([=]() {
+				vkDestroyCommandPool(_vk.device(), frames[i].pool, nullptr);
+				vkDestroyFence(_vk.device(), frames[i].renderF, nullptr);
+				vkDestroySemaphore(_vk.device(), frames[i].renderS, nullptr);
+				vkDestroySemaphore(_vk.device(), frames[i].presentS, nullptr);
+				});
 
-		auto cmd_info = vki::command_buffer_allocate_info(
-			_vk.command_pool);
-
-		VK_CHECK(vkAllocateCommandBuffers(_vk.device(), &cmd_info, &_vk.cmd_main));
-		
+		}
 		return true;
 	}
 
@@ -172,7 +183,7 @@ namespace zebra {
 		};
 
 		VK_CHECK(vkCreateRenderPass(_vk.device(), &render_pass_info, nullptr, &_vk.renderpass));
-		main_delq.push_function([=]() {
+		swapchain_delq.push_function([=]() {
 			vkDestroyRenderPass(_vk.device(), _vk.renderpass, nullptr);
 			});
 		return true;
@@ -181,7 +192,8 @@ namespace zebra {
 	bool zCore::init_framebuffers() {
 
 		i32 w, h;
-		glfwGetFramebufferSize(_window.handle, &w, &h);
+		w = _window.extent().width;
+		h = _window.extent().height;
 
 		VkFramebufferCreateInfo fb_info = {
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -193,7 +205,7 @@ namespace zebra {
 			.layers = 1,
 		};
 
-		const u32 swapchain_imagecount = _vk.image_views.size();
+		const u32 swapchain_imagecount = (u32)_vk.image_views.size();
 		auto swapchain_imageviews = _vk.image_views;
 		_vk.framebuffers = std::vector<VkFramebuffer>(_vk.image_views.size());
 
@@ -202,38 +214,11 @@ namespace zebra {
 			fb_info.attachmentCount = attachments.size();
 			fb_info.pAttachments = attachments.begin();
 			VK_CHECK(vkCreateFramebuffer(_vk.device(), &fb_info, nullptr, &_vk.framebuffers[i]));
-			main_delq.push_function([=]() {
+			swapchain_delq.push_function([=]() {
 				vkDestroyFramebuffer(_vk.device(), _vk.framebuffers[i], nullptr);
 				});
 		}
 
-
-		return true;
-	}
-
-	bool zCore::init_sync() {
-		VkFenceCreateInfo fence_info = {
-			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-			.pNext = nullptr,
-			.flags = VK_FENCE_CREATE_SIGNALED_BIT,
-		};
-
-		VK_CHECK(vkCreateFence(_vk.device(), &fence_info, nullptr, &_sync.renderF));
-
-		VkSemaphoreCreateInfo semaphore_info = {
-			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-			.pNext = nullptr,
-			.flags = 0,
-		};
-
-		VK_CHECK(vkCreateSemaphore(_vk.device(), &semaphore_info, nullptr, &_sync.presentS));
-		VK_CHECK(vkCreateSemaphore(_vk.device(), &semaphore_info, nullptr, &_sync.renderS));
-		main_delq.push_function([=]() {
-			vkDestroyFence(_vk.device(), _sync.renderF, nullptr);
-			vkDestroySemaphore(_vk.device(), _sync.renderS, nullptr);
-			vkDestroySemaphore(_vk.device(), _sync.presentS, nullptr);
-
-			});
 
 		return true;
 	}
@@ -263,7 +248,7 @@ namespace zebra {
 		_window.vkb_swapchain = swap_ret.value(); 
 		_vk.images = _window.vkb_swapchain.get_images().value();
 		_vk.image_views = _window.vkb_swapchain.get_image_views().value();
-		main_delq.push_function([=]() {
+		swapchain_delq.push_function([=]() {
 			for (auto i = 0u; i < _vk.image_views.size(); i++) {
 				vkDestroyImageView(_vk.device(), _vk.image_views[i], nullptr);
 			}
@@ -287,7 +272,7 @@ namespace zebra {
 		VkImageViewCreateInfo depth_view_info = vki::imageview_create_info(_vk.depth_format, _vk.depth_image.image, VK_IMAGE_ASPECT_DEPTH_BIT);
 		VK_CHECK(vkCreateImageView(_vk.device(), &depth_view_info, nullptr, &_vk.depth_image_view));
 
-		main_delq.push_function([=]() {
+		swapchain_delq.push_function([=]() {
 			vkDestroyImageView(_vk.device(), _vk.depth_image_view, nullptr);
 			vmaDestroyImage(_vk.allocator, _vk.depth_image.image, _vk.depth_image.allocation);
 		});
@@ -296,16 +281,20 @@ namespace zebra {
 	}
 
 	bool zCore::recreate_swapchain() {
-		vkb::SwapchainBuilder swapchain_builder{ _vk.vkb_device };
-		auto swap_ret = swapchain_builder
-			.set_old_swapchain(_window.vkb_swapchain)
-			.build();
-		if (!swap_ret) {
-			_window.vkb_swapchain.swapchain = VK_NULL_HANDLE;
-		}
-		
-		vkb::destroy_swapchain(_window.vkb_swapchain);
-		_window.vkb_swapchain = swap_ret.value(); 
+
+		vkDeviceWaitIdle(_vk.device());
+		swapchain_delq.flush();
+		DBG("recreate swapchain");
+		if (!this->init_swapchain()) return false;
+
+		DBG("per frame data");
+		if (!this->init_per_frame_data()) return false;
+
+		DBG("render pass");
+		if (!this->init_default_renderpass()) return false;
+
+		DBG("framebuffers");
+		if (!this->init_framebuffers()) return false;
 		return true;
 	}
 
@@ -381,32 +370,12 @@ namespace zebra {
 	}
 
 	bool zCore::init_pipelines() {
-		VkShaderModule triangle_frag;
-		VkShaderModule triangle_vertex;
-		if (!load_shader_module("../shaders/triangle.frag.spv", &triangle_frag)) {
-			DBG("error with triangle fragment shader");
-		} else {
-			DBG("triangle fragment shader loaded");
-		}
-
-		if (!load_shader_module("../shaders/triangle.vert.spv", &triangle_vertex)) {
-			DBG("error with triangle vertex shader");
-		} else {
-			DBG("triangle vertex shader loaded");
-		}
 
 		VkShaderModule colored_triangle_frag;
-		VkShaderModule colored_triangle_vertex;
 		if (!load_shader_module("../shaders/colored_triangle.frag.spv", &colored_triangle_frag)) {
 			DBG("error with colored triangle fragment shader");
 		} else {
 			DBG("colored triangle fragment shader loaded");
-		}
-
-		if (!load_shader_module("../shaders/colored_triangle.vert.spv", &colored_triangle_vertex)) {
-			DBG("error with triangle vertex shader");
-		} else {
-			DBG("colored triangle vertex shader loaded");
 		}
 		VkShaderModule mesh_triangle_vertex;
 		if (!load_shader_module("../shaders/tri_mesh.vert.spv", &mesh_triangle_vertex)) {
@@ -417,16 +386,7 @@ namespace zebra {
 
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info = vki::pipeline_layout_create_info();
-		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &pipeline_layout_info, nullptr, &_triangle_pipeline_layout));
-
 		PipelineBuilder pipeline_builder;
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, triangle_vertex)
-		);
-
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, triangle_frag)
-		);
 
 		pipeline_builder._vertex_input_info = vki::vertex_input_state_create_info();
 		pipeline_builder._input_assembly = vki::input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -448,21 +408,7 @@ namespace zebra {
 		pipeline_builder._multisampling = vki::multisampling_state_create_info();
 		pipeline_builder._color_blend_attachment = vki::color_blend_attachment_state();
 		pipeline_builder._depth_stencil = vki::depth_stencil_create_info(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
-		pipeline_builder._pipelineLayout = _triangle_pipeline_layout;
-		
-		_triangle_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
-		
-		// colored triangle
-		pipeline_builder._shader_stages.clear();
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, colored_triangle_vertex)
-		);
 
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, colored_triangle_frag)
-		);
-
-		_colored_triangle_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
 		// mesh
 		pipeline_builder._shader_stages.clear();
 		auto mesh_pipeline_layout_info = vki::pipeline_layout_create_info();
@@ -494,16 +440,10 @@ namespace zebra {
 		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
 
 		//cleanup
-		vkDestroyShaderModule(_vk.device(), triangle_frag, nullptr);
-		vkDestroyShaderModule(_vk.device(), triangle_vertex, nullptr);
 		vkDestroyShaderModule(_vk.device(), colored_triangle_frag, nullptr);
-		vkDestroyShaderModule(_vk.device(), colored_triangle_vertex, nullptr);
 		vkDestroyShaderModule(_vk.device(), mesh_triangle_vertex, nullptr);
 		main_delq.push_function([=]() {
-			vkDestroyPipelineLayout(_vk.device(), _triangle_pipeline_layout, nullptr);
 			vkDestroyPipelineLayout(_vk.device(), _mesh_pipeline_layout, nullptr);
-			vkDestroyPipeline(_vk.device(), _triangle_pipeline, nullptr);
-			vkDestroyPipeline(_vk.device(), _colored_triangle_pipeline, nullptr);
 			vkDestroyPipeline(_vk.device(), _mesh_pipeline, nullptr);
 			});
 
@@ -535,6 +475,7 @@ namespace zebra {
 
 	bool zCore::cleanup() {
 		vkQueueWaitIdle(_vk.graphics_queue);
+		swapchain_delq.flush();
 		main_delq.flush();
 
 		vkb::destroy_surface(_vk.vkb_instance, _window.surface);
@@ -621,6 +562,15 @@ namespace zebra {
 		return true;
 	}
 
+	bool zCore::advance_frame() {
+		frame_counter = frame_counter + 1;
+		return true;
+	} 
+
+	PerFrameData& zCore::current_frame() {
+		return frames[frame_counter % FRAME_OVERLAP];
+	}
+
 	void zCore::load_meshes() {
 		_triangle_mesh._vertices.resize(3);
 		//vertex positions
@@ -693,7 +643,6 @@ namespace zebra {
 		auto monitor = glfwGetPrimaryMonitor();
 		auto refresh_rate = glfwGetVideoMode(monitor)->refreshRate;
 		auto dt = 1.f / 100.f;
-		auto time_acc = 0.f;
 		double global_current_time = 0.0;
 
 		while (true) {
@@ -701,24 +650,16 @@ namespace zebra {
 			auto time_passed = start_frame - old_frame_start;
 			auto time_passed_float = std::chrono::duration<float>(time_passed).count();
 			global_current_time += time_passed_float;
-			time_acc += time_passed_float;
 
-			if (time_acc > dt) {
-				// do time step
-				DBG("animation time step! " << time_acc);
-				time_acc -= dt;
-				global_current_time += dt;
-			}
-
-			if(vkGetFenceStatus(_vk.device(), _sync.renderF) == VK_SUCCESS)
+			if(vkGetFenceStatus(_vk.device(), current_frame().renderF) == VK_SUCCESS)
 			{ // actual rendering
-				vkResetFences(_vk.device(), 1, &_sync.renderF);
+				vkResetFences(_vk.device(), 1, &current_frame().renderF);
 				uint32_t swapchain_image_idx;
-				auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, _sync.presentS, nullptr, &swapchain_image_idx);
+				auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
 
-				if (acquire_result == VK_SUCCESS || acquire_result == VK_SUBOPTIMAL_KHR) {
+				if (acquire_result == VK_SUCCESS) {
 					// we have an image to render to
-					VK_CHECK(vkResetCommandBuffer(_vk.cmd_main, 0));
+					VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
 					VkCommandBufferBeginInfo cmd_begin_info = {
 						.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 						.pNext = nullptr,
@@ -726,7 +667,7 @@ namespace zebra {
 						.pInheritanceInfo = nullptr,
 					};
 
-					VK_CHECK(vkBeginCommandBuffer(_vk.cmd_main, &cmd_begin_info));
+					VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
 					VkClearValue clear_value;
 					float flash = abs(sin(global_current_time));
 					clear_value.color = { {0.f, 0.f, flash, 1.f} };
@@ -752,40 +693,64 @@ namespace zebra {
 					.pClearValues = clear_values.begin(),
 					};
 
-					vkCmdBeginRenderPass(_vk.cmd_main, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
+					vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-					draw_objects(_vk.cmd_main, std::span<RenderObject>(_renderables.data(), _renderables.size()));
+					// -- dynamic state
 
-					vkCmdEndRenderPass(_vk.cmd_main);
+					VkViewport viewport = {};
+					viewport.height = _window.extent().height;
+					viewport.width = _window.extent().width;
+					viewport.minDepth = 0.0f;
+					viewport.maxDepth = 1.0f;
+					viewport.x = 0;
+					viewport.y = 0;
 
-					VK_CHECK(vkEndCommandBuffer(_vk.cmd_main));
+					vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
+
+					VkRect2D scissor = {
+						.offset = { 0, 0 },
+						.extent = _window.extent(),
+					};
+
+					vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
+
+					// -- end dynamic state
+
+					draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
+
+					vkCmdEndRenderPass(current_frame().buf);
+
+					VK_CHECK(vkEndCommandBuffer(current_frame().buf));
 
 					VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 					VkSubmitInfo submit_info = {
 						.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 						.pNext = nullptr,
 						.waitSemaphoreCount = 1,
-						.pWaitSemaphores = &_sync.presentS,
+						.pWaitSemaphores = &current_frame().presentS,
 						.pWaitDstStageMask = &wait_stage,
 						.commandBufferCount = 1,
-						.pCommandBuffers = &_vk.cmd_main,
+						.pCommandBuffers = &current_frame().buf,
 						.signalSemaphoreCount = 1,
-						.pSignalSemaphores = &_sync.renderS,
+						.pSignalSemaphores = &current_frame().renderS,
 					};
 
-					VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, _sync.renderF));
+					VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, current_frame().renderF));
 					VkPresentInfoKHR present_info = {
 						.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 						.pNext = nullptr,
 						.waitSemaphoreCount = 1,
-						.pWaitSemaphores = &_sync.renderS,
+						.pWaitSemaphores = &current_frame().renderS,
 						.swapchainCount = 1,
 						.pSwapchains = &_window.vkb_swapchain.swapchain,
 						.pImageIndices = &swapchain_image_idx,
 					};
 
-					VK_CHECK(vkQueuePresentKHR(_vk.graphics_queue, &present_info));
-				} 
+					vkQueuePresentKHR(_vk.graphics_queue, &present_info);
+					advance_frame();
+				} else if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
+					this->recreate_swapchain();
+				}
 			}
 
 			if (stoken.stop_requested()) {

@@ -24,10 +24,13 @@ if (err) { std::cerr << "[" << __func__ << "]" << "vulkan error: " << err << std
 } while (false)
 
 namespace zebra { 
-	
-	struct VulkanSync {
+
+	struct PerFrameData {
 		VkSemaphore presentS, renderS;
 		VkFence renderF;
+
+		VkCommandPool pool;
+		VkCommandBuffer buf;
 	};
 	
 	struct VulkanNative {
@@ -40,9 +43,6 @@ namespace zebra {
 			return vkb_device.device;
 		}
 		VkQueue graphics_queue;
-		VkCommandPool command_pool;
-
-		VkCommandBuffer cmd_main;
 		VkRenderPass renderpass;
 		VmaAllocator allocator;
 
@@ -132,16 +132,20 @@ namespace zebra {
 	};
 
 
-
+	constexpr u32 FRAME_OVERLAP = 2u;
 	class zCore {
+	protected:
 		VulkanNative _vk;
-		VulkanSync _sync;
 		Window _window;
 		DeletionQueue main_delq;
+		DeletionQueue swapchain_delq;
+
+		std::array<PerFrameData, FRAME_OVERLAP> frames;
+		size_t frame_counter = 0;
 
 		bool die = false;
 
-	protected:
+
 
 		// Input
 
@@ -160,10 +164,9 @@ namespace zebra {
 		bool init_vulkan();
 		bool init_gfx();
 		bool init_default_renderpass();
-		bool init_commands();
+		bool init_per_frame_data();
 		bool init_swapchain();
 		bool init_framebuffers();
-		bool init_sync();
 		bool init_pipelines();
 		void init_scene();
 		bool recreate_swapchain();
@@ -183,11 +186,10 @@ namespace zebra {
 		Material* create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name);
 		Material* get_material(const std::string& name);
 		Mesh* get_mesh(const std::string& name);
+		bool advance_frame();
+		PerFrameData& current_frame();
 
-		VkPipelineLayout _triangle_pipeline_layout;
 		VkPipelineLayout _mesh_pipeline_layout;
-		VkPipeline _triangle_pipeline;
-		VkPipeline _colored_triangle_pipeline;
 		VkPipeline _mesh_pipeline;
 
 		std::vector<RenderObject> _renderables;
@@ -196,7 +198,6 @@ namespace zebra {
 
 		Mesh _triangle_mesh;
 		Mesh _monkey_mesh;
-		u32 _selected_shader = 0u;
 
 
 		zCore();
