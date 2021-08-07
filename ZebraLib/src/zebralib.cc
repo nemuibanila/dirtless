@@ -21,6 +21,7 @@
 #include "g_pipeline.h"
 #include "g_mesh.h"
 #include <glm/glm.hpp>
+#include <glm/ext/quaternion_float.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/scalar_constants.hpp>
@@ -53,6 +54,31 @@ namespace zebra {
 		next_shader.key = Key{ GLFW_KEY_N };
 		next_shader.action = InputAction::NEXT_SHADER;
 		this->key_inputs.push_back(next_shader);
+
+		KeyInput forward;
+		forward.key = Key{ GLFW_KEY_W };
+		forward.condition = KeyCondition::HOLD;
+		forward.action = InputAction::MOVE_FORWARD;
+		this->key_inputs.push_back(forward);
+
+		KeyInput back;
+		back.key = Key{ GLFW_KEY_S };
+		back.condition = KeyCondition::HOLD;
+		back.action = InputAction::MOVE_BACK;
+		this->key_inputs.push_back(back);
+
+		KeyInput left;
+		left.key = Key{ GLFW_KEY_A };
+		left.condition = KeyCondition::HOLD;
+		left.action = InputAction::MOVE_STRAFE_LEFT;
+		this->key_inputs.push_back(left);
+
+		KeyInput right;
+		right.key = Key{ GLFW_KEY_D };
+		right.condition = KeyCondition::HOLD;
+		right.action = InputAction::MOVE_STRAFE_RIGHT;
+		this->key_inputs.push_back(right);
+
 
 		app_loop();
 		return true;
@@ -90,6 +116,18 @@ namespace zebra {
 		DBG("-- resources");
 		DBG("meshes");
 		load_meshes();
+
+		DBG("camera");
+		_camera = {
+			._pos = glm::vec3(0.f),
+			._rotation = glm::quat(0.f,0.f,0.f,1.f),
+			.smoothing = 4.f,
+			.aspect = 16.f / 9.f,
+			.povy = 70.f,
+			.z_near = 0.01f,
+			.z_far = 200.f,
+		};
+
 
 		return true;
 	}
@@ -236,6 +274,8 @@ namespace zebra {
 	}
 
 	bool zCore::init_swapchain() {
+		vkDeviceWaitIdle(_vk.device());
+
 		vkb::SwapchainBuilder swapchain_builder{ _vk.vkb_device };
 		auto swap_ret = swapchain_builder
 			.use_default_present_mode_selection()
@@ -245,7 +285,8 @@ namespace zebra {
 			return false;
 		}
 
-		_window.vkb_swapchain = swap_ret.value(); 
+		_window.vkb_swapchain = swap_ret.value();
+
 		_vk.images = _window.vkb_swapchain.get_images().value();
 		_vk.image_views = _window.vkb_swapchain.get_image_views().value();
 		swapchain_delq.push_function([=]() {
@@ -284,6 +325,15 @@ namespace zebra {
 
 		vkDeviceWaitIdle(_vk.device());
 		swapchain_delq.flush();
+		int w, h;
+		do {
+			glfwGetWindowSize(this->_window.handle, &w, &h);
+			if (w == 0 && h == 0) {
+				DBG("window is currently 0-sized");
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+		} while (w == 0 && h == 0);
+
 		DBG("recreate swapchain");
 		if (!this->init_swapchain()) return false;
 
@@ -526,7 +576,34 @@ namespace zebra {
 
 
 	void zCore::process_key_inputs() {
+		std::set<InputAction> held_actions;
+		for (auto keyi : key_inputs) {
+			if (keyi.condition == HOLD && is_key_held(keyi.key)) {
+				held_actions.insert(keyi.action);
+			}
+		}
 
+		auto keypress_direction = glm::vec3(0.f);
+		if (held_actions.contains(InputAction::MOVE_FORWARD)) {
+			keypress_direction += glm::vec3(0.f, 0.f, 1.f);
+		}
+		if (held_actions.contains(InputAction::MOVE_BACK)) {
+			keypress_direction += glm::vec3(0.f, 0.f, -1.f);
+		}
+		if (held_actions.contains(InputAction::MOVE_STRAFE_LEFT)) {
+			keypress_direction += glm::vec3(1.f, 0.f, 0.f);
+		}
+		if (held_actions.contains(InputAction::MOVE_STRAFE_RIGHT)) {
+			keypress_direction += glm::vec3(-1.f, 0.f, 0.f);
+		}
+		if (glm::length(keypress_direction) > 0.00001f) {
+			keypress_direction = glm::normalize(keypress_direction);
+			float movement_angle = 0.f;
+			auto rotation = _camera._rotation;
+			auto direction = rotation * keypress_direction;
+			float speed = 0.04f;
+			_camera.apply_movement(speed * direction);
+		}
 	}
 
 	bool zCore::load_shader_module(const char* file_path, VkShaderModule* out_shader) {
@@ -765,10 +842,9 @@ namespace zebra {
 	}
 
 	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
-		glm::vec3 cam_pos = { 0.f, -6.f, -10.f };
-		glm::mat4 view = glm::translate(glm::mat4(1.f), cam_pos);
-		glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
-		projection[1][1] *= -1; // for vulkan coordinates
+		glm::mat4 view = _camera.view();
+		glm::mat4 projection = _camera.projection();
+		
 
 		Mesh* last_mesh = nullptr;
 		Material* last_material = nullptr;
@@ -803,13 +879,26 @@ namespace zebra {
 		std::jthread draw_thread([this](std::stop_token stoken){ 
 			this->draw_loop(stoken);
 		});
-
+		auto old_tick = std::chrono::steady_clock::now();
+		auto tick_acc = 0.f;
+		auto dt = 1.f / 100.f;
 
 		while (!glfwWindowShouldClose(_window.handle)) {
 			if (die) {
 				DBG("time to die");
 				return;
 			}
+			auto now_tick = std::chrono::steady_clock::now();
+			std::chrono::duration<float> tick_fdiff = now_tick - old_tick;
+			tick_acc += tick_fdiff.count();
+
+			if (tick_acc > dt) {
+				// tick loop
+				tick_acc -= dt;
+				process_key_inputs();
+				_camera.tick();
+			}
+			old_tick = now_tick;
 
 			glfwPollEvents();
 			std::this_thread::yield();

@@ -14,6 +14,7 @@
 
 #include "zebratypes.h"
 #include "g_types.h"
+#include "g_camera.h"
 #include "g_mesh.h"
 
 #define DBG(x) std::cerr<<"["<<__func__<<"]"<<x<<std::endl;
@@ -124,6 +125,7 @@ namespace zebra {
 	struct KeyInput {
 		Key key{ 0 };
 		KeyCondition condition = KeyCondition::PRESSED;
+		/// @brief Hold keys can not use modifiers
 		KeyModifier modifiers{ NONE };
 		InputAction action{ NO_ACTION };
 		bool match(Key k, KeyModifier m, KeyCondition c) {
@@ -195,6 +197,8 @@ namespace zebra {
 		std::vector<RenderObject> _renderables;
 		std::unordered_map<std::string, Material> _materials;
 		std::unordered_map<std::string, Mesh> _meshes;
+
+		PerspectiveCamera _camera;
 
 		Mesh _triangle_mesh;
 		Mesh _monkey_mesh;
