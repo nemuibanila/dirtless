@@ -39,10 +39,35 @@ namespace zebra {
 
 		glfwSetWindowUserPointer(_window.handle, this);
 		glfwSetKeyCallback(_window.handle, zCore::_glfw_key_callback_caller);
+		glfwSetCursorPosCallback(_window.handle, zCore::_glfw_mouse_position_callback_caller);
+		double x, y;
+		glfwGetCursorPos(_window.handle, &x, &y);
+		_mouse_old_pos = { x, y };
+
+		if (glfwRawMouseMotionSupported()) {
+			glfwSetInputMode(_window.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+		}
 
 		this->action_map[EXIT_PROGRAM] = [this]() {
 			this->die = true;
 		};
+
+		this->action_map[TOGGLE_ABSOLUTE_MOUSE] = [this]() {
+			this->cursor_use_absolute_position ^= 1;
+			u32 cursor_mode;
+			if (this->cursor_use_absolute_position) {
+				cursor_mode = GLFW_CURSOR_NORMAL;
+			} else {
+				cursor_mode = GLFW_CURSOR_DISABLED;
+			}
+			glfwSetInputMode(_window.handle, GLFW_CURSOR, cursor_mode);
+		};
+
+		KeyInput toggle_absolute{
+			.key = GLFW_KEY_K,
+			.action = InputAction::TOGGLE_ABSOLUTE_MOUSE
+		};
+		this->key_inputs.push_back(toggle_absolute);
 
 
 		KeyInput exit;
@@ -118,14 +143,17 @@ namespace zebra {
 		load_meshes();
 
 		DBG("camera");
+
+		auto rotation_initial = glm::quat(1.f, 0.f, 0.f, 0.f);
 		_camera = {
 			._pos = glm::vec3(0.f),
-			._rotation = glm::quat(0.f,0.f,0.f,1.f),
 			.smoothing = 4.f,
 			.aspect = 16.f / 9.f,
 			.povy = 70.f,
 			.z_near = 0.01f,
 			.z_far = 200.f,
+			.phi = 0.f,
+			.theta = 0.f,
 		};
 
 
@@ -574,6 +602,21 @@ namespace zebra {
 		return glfwGetKey(_window.handle, k.keycode);
 	}
 
+	void zCore::_glfw_mouse_position_callback_caller(GLFWwindow* window, double x, double y) {
+		zCore* zcore = (zCore*)glfwGetWindowUserPointer(window);
+		zcore->_glfw_mouse_position_callback(window, x, y);
+	}
+
+	void zCore::_glfw_mouse_position_callback(GLFWwindow* window, double x, double y) {
+		if (cursor_use_absolute_position) {
+			// schedule UI to update, but I dont have UI yet..
+		} else {
+			glm::vec2 mouse_nowpos = { x, y };
+			mouse_delta += mouse_nowpos - _mouse_old_pos;
+		}
+
+		_mouse_old_pos = { x, y };
+	}
 
 	void zCore::process_key_inputs() {
 		std::set<InputAction> held_actions;
@@ -583,27 +626,47 @@ namespace zebra {
 			}
 		}
 
-		auto keypress_direction = glm::vec3(0.f);
+		bool moving = false;
+		float angle = 0.f;
 		if (held_actions.contains(InputAction::MOVE_FORWARD)) {
-			keypress_direction += glm::vec3(0.f, 0.f, 1.f);
+			moving = true;
 		}
 		if (held_actions.contains(InputAction::MOVE_BACK)) {
-			keypress_direction += glm::vec3(0.f, 0.f, -1.f);
+			moving = true;
+			angle += glm::pi<float>();
 		}
 		if (held_actions.contains(InputAction::MOVE_STRAFE_LEFT)) {
-			keypress_direction += glm::vec3(1.f, 0.f, 0.f);
+			moving = true;
+			angle -= glm::half_pi<float>();
 		}
 		if (held_actions.contains(InputAction::MOVE_STRAFE_RIGHT)) {
-			keypress_direction += glm::vec3(-1.f, 0.f, 0.f);
+			moving = true;
+			angle += glm::half_pi<float>();
 		}
-		if (glm::length(keypress_direction) > 0.00001f) {
-			keypress_direction = glm::normalize(keypress_direction);
+		if (moving) {
 			float movement_angle = 0.f;
-			auto rotation = _camera._rotation;
-			auto direction = rotation * keypress_direction;
-			float speed = 0.04f;
-			_camera.apply_movement(speed * direction);
+			auto rotation = -_camera.rotation();
+			auto forward = rotation * glm::vec3(0.f, 0.f, 1.f);
+			auto proj = glm::vec3(1.f, 0.f, 0.f) * glm::dot(forward, glm::vec3(0.f, 1.f, 0.f))
+				+ glm::vec3(0.f, 0.f, 1.f) * glm::dot(forward, glm::vec3(0.f, 0.f, 1.f));
+			proj = glm::normalize(proj);
+			auto movement_direction_rotation = glm::quat(glm::vec3(0.f, angle, 0.f));
+			auto direction = movement_direction_rotation * proj;
+			direction = glm::normalize(direction);
+			float speed = 4.f;
+			_camera.apply_movement(TICK_DT * speed * direction);
 		}
+	}
+
+	void zCore::process_mouse_inputs() {
+		DBG("dx " << mouse_delta.x << " dy " << mouse_delta.y);
+		DBG(" x " << _camera._pos.x << "  y " << _camera._pos.y << "  z " << _camera._pos.z);
+		DBG("phi " << _camera.phi << " theta " << _camera.theta);
+
+		auto invert_cam_factor = invert_camera ? -1.f : 1.f;
+		auto sensitivity_delta = mouse_delta_sens * mouse_delta;
+		_camera.apply_rotation(sensitivity_delta.y * invert_cam_factor, sensitivity_delta.x);
+		mouse_delta = glm::vec2(0.f);
 	}
 
 	bool zCore::load_shader_module(const char* file_path, VkShaderModule* out_shader) {
@@ -881,7 +944,7 @@ namespace zebra {
 		});
 		auto old_tick = std::chrono::steady_clock::now();
 		auto tick_acc = 0.f;
-		auto dt = 1.f / 100.f;
+		auto dt = TICK_DT;
 
 		while (!glfwWindowShouldClose(_window.handle)) {
 			if (die) {
@@ -896,6 +959,7 @@ namespace zebra {
 				// tick loop
 				tick_acc -= dt;
 				process_key_inputs();
+				process_mouse_inputs();
 				_camera.tick();
 			}
 			old_tick = now_tick;

@@ -135,32 +135,38 @@ namespace zebra {
 
 
 	constexpr u32 FRAME_OVERLAP = 2u;
+	constexpr float TICK_DT = 1.f / 100.f;
+
 	class zCore {
 	protected:
-		VulkanNative _vk;
-		Window _window;
+		// -- cleanup
 		DeletionQueue main_delq;
 		DeletionQueue swapchain_delq;
+		bool die = false;
 
+		// -- rendering
+		VulkanNative _vk;
+		Window _window;
 		std::array<PerFrameData, FRAME_OVERLAP> frames;
 		size_t frame_counter = 0;
 
-		bool die = false;
 
 
-
-		// Input
-
+		// -- Input
+		// 
 		// prologue to set state
 		static void _glfw_key_callback_caller(GLFWwindow* window, i32 key, i32 scancode, i32 action, i32 mods);
 		void _glfw_key_callback(GLFWwindow* window, i32 key, i32 scancode, i32 action, i32 mods);
 		
+		glm::vec2 _mouse_old_pos;
+		static void _glfw_mouse_position_callback_caller(GLFWwindow* window, double x, double y);
+		void _glfw_mouse_position_callback(GLFWwindow* window, double x, double y);
+
 		// epilogue, triggered by key event
 		// pressed, release events are processed immediately
 		// holds are deferred to the next tick
 		void process_key_inputs();
-		std::map<InputAction, std::function<void()>> action_map;
-		std::vector<KeyInput> key_inputs;
+		void process_mouse_inputs();
 
 		// Gfx
 		bool init_vulkan();
@@ -179,10 +185,10 @@ namespace zebra {
 		void draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects);
 		void load_meshes();
 
-		// helpers
 
 
 	public:
+		// -- rendering
 		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
 		void upload_mesh(Mesh& mesh);
 		Material* create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name);
@@ -203,6 +209,13 @@ namespace zebra {
 		Mesh _triangle_mesh;
 		Mesh _monkey_mesh;
 
+		// -- input 
+		std::map<InputAction, std::function<void()>> action_map;
+		std::vector<KeyInput> key_inputs;
+		bool cursor_use_absolute_position = false;
+		bool invert_camera = false;
+		glm::vec2 mouse_delta_sens = glm::vec2(0.01f, 0.01f);
+		glm::vec2 mouse_delta = glm::vec2(0.f);
 
 		zCore();
 		virtual ~zCore();
