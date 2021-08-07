@@ -7,12 +7,14 @@ namespace zebra {
 		glm::mat4 view();
 		glm::mat4 projection();
 		glm::vec3 forward();
+		glm::vec3 right();
 		
 		glm::vec3 _pos;
 		glm::vec3 _acc = glm::vec3(0.f);
 		glm::quat rotation();
-		
-		
+		glm::quat _rx = glm::quat(1.f, 0.f, 0.f, 0.f);
+		glm::quat _ry = glm::quat(1.f, 0.f, 0.f, 0.f);
+		glm::quat base_rotation = glm::quat(glm::vec3(0.f, glm::pi<float>(), 0.f));
 		float smoothing;
 
 		float aspect;
@@ -21,10 +23,9 @@ namespace zebra {
 		float z_near;
 		float z_far;
 
-		float phi;
-		float phi_limit = 0.95f * glm::half_pi<float>();
-		float theta;
-
+		//float phi;
+		//float phi_limit = 0.95f * glm::half_pi<float>();
+		//float theta;
 
 		void apply_movement(glm::vec3 dv);
 		void apply_rotation(float phi, float theta);

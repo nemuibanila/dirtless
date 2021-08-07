@@ -16,13 +16,8 @@
 #include "g_types.h"
 #include "g_camera.h"
 #include "g_mesh.h"
+#include "z_debug.h"
 
-#define DBG(x) std::cerr<<"["<<__func__<<"]"<<x<<std::endl;
-
-#define VK_CHECK(x) do {\
-VkResult err = x;\
-if (err) { std::cerr << "[" << __func__ << "]" << "vulkan error: " << err << std::endl; abort();}\
-} while (false)
 
 namespace zebra { 
 

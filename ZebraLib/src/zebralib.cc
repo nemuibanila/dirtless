@@ -20,8 +20,9 @@
 #include "g_types.h"
 #include "g_pipeline.h"
 #include "g_mesh.h"
+#include "g_vec.h"
 #include <glm/glm.hpp>
-#include <glm/ext/quaternion_float.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/scalar_constants.hpp>
@@ -152,8 +153,6 @@ namespace zebra {
 			.povy = 70.f,
 			.z_near = 0.01f,
 			.z_far = 200.f,
-			.phi = 0.f,
-			.theta = 0.f,
 		};
 
 
@@ -626,42 +625,34 @@ namespace zebra {
 			}
 		}
 
-		bool moving = false;
-		float angle = 0.f;
+		glm::vec2 movement_dir{ 0.f,0.f };
+
 		if (held_actions.contains(InputAction::MOVE_FORWARD)) {
-			moving = true;
+			movement_dir += glm::vec2{ 0.f, 1.f };
 		}
 		if (held_actions.contains(InputAction::MOVE_BACK)) {
-			moving = true;
-			angle += glm::pi<float>();
+			movement_dir += glm::vec2{ 0.f, -1.f };
 		}
 		if (held_actions.contains(InputAction::MOVE_STRAFE_LEFT)) {
-			moving = true;
-			angle -= glm::half_pi<float>();
+			movement_dir += glm::vec2{ -1.f, 0.f };
 		}
 		if (held_actions.contains(InputAction::MOVE_STRAFE_RIGHT)) {
-			moving = true;
-			angle += glm::half_pi<float>();
+			movement_dir += glm::vec2{ 1.f, 0.f };
 		}
-		if (moving) {
-			float movement_angle = 0.f;
-			auto rotation = -_camera.rotation();
-			auto forward = rotation * glm::vec3(0.f, 0.f, 1.f);
-			auto proj = glm::vec3(1.f, 0.f, 0.f) * glm::dot(forward, glm::vec3(0.f, 1.f, 0.f))
-				+ glm::vec3(0.f, 0.f, 1.f) * glm::dot(forward, glm::vec3(0.f, 0.f, 1.f));
-			proj = glm::normalize(proj);
-			auto movement_direction_rotation = glm::quat(glm::vec3(0.f, angle, 0.f));
-			auto direction = movement_direction_rotation * proj;
-			direction = glm::normalize(direction);
+
+		DBG("cpos " << _camera._pos);
+		DBG("cfwd " << _camera.forward());
+		if (movement_dir != glm::vec2{ 0.f, 0.f }) {
+			auto direction = glm::normalize(_camera.right() * movement_dir.x + _camera.forward() * movement_dir.y);
 			float speed = 4.f;
 			_camera.apply_movement(TICK_DT * speed * direction);
 		}
 	}
 
 	void zCore::process_mouse_inputs() {
-		DBG("dx " << mouse_delta.x << " dy " << mouse_delta.y);
-		DBG(" x " << _camera._pos.x << "  y " << _camera._pos.y << "  z " << _camera._pos.z);
-		DBG("phi " << _camera.phi << " theta " << _camera.theta);
+		//DBG("dx " << mouse_delta.x << " dy " << mouse_delta.y);
+		//DBG(" x " << _camera._pos.x << "  y " << _camera._pos.y << "  z " << _camera._pos.z);
+		//DBG("phi " << _camera.phi << " theta " << _camera.theta);
 
 		auto invert_cam_factor = invert_camera ? -1.f : 1.f;
 		auto sensitivity_delta = mouse_delta_sens * mouse_delta;

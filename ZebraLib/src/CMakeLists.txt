@@ -17,7 +17,7 @@ add_executable (zebralib
  "g_mesh.h"
  "g_mesh.cc" 
  "g_camera.h"
- "g_camera.cc" )
+ "g_camera.cc"  "g_vec.h" "z_debug.h")
 
 set_property(TARGET zebralib PROPERTY VS_DEBUFGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:zebralib")
 
