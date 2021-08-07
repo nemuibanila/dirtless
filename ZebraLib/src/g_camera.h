@@ -8,6 +8,7 @@ namespace zebra {
 		glm::mat4 projection();
 		glm::vec3 forward();
 		glm::vec3 right();
+		glm::vec3 up();
 		
 		glm::vec3 _pos;
 		glm::vec3 _acc = glm::vec3(0.f);

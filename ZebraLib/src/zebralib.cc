@@ -105,6 +105,19 @@ namespace zebra {
 		right.action = InputAction::MOVE_STRAFE_RIGHT;
 		this->key_inputs.push_back(right);
 
+		KeyInput up{
+			.key = GLFW_KEY_SPACE,
+			.condition = KeyCondition::HOLD,
+			.action = InputAction::MOVE_FLY_UP,
+		};
+		key_inputs.push_back(up);
+
+		KeyInput down{
+			.key = GLFW_KEY_C,
+			.condition = KeyCondition::HOLD,
+			.action = InputAction::MOVE_FLY_DOWN,
+		};
+		key_inputs.push_back(down);
 
 		app_loop();
 		return true;
@@ -626,7 +639,6 @@ namespace zebra {
 		}
 
 		glm::vec2 movement_dir{ 0.f,0.f };
-
 		if (held_actions.contains(InputAction::MOVE_FORWARD)) {
 			movement_dir += glm::vec2{ 0.f, 1.f };
 		}
@@ -647,6 +659,20 @@ namespace zebra {
 			float speed = 4.f;
 			_camera.apply_movement(TICK_DT * speed * direction);
 		}
+
+		float fly_dir = 0.f;
+		if (held_actions.contains(InputAction::MOVE_FLY_UP)) {
+			fly_dir -= 1.f;
+		} 
+		if (held_actions.contains(InputAction::MOVE_FLY_DOWN)) {
+			fly_dir += 1.f;
+		}
+		if (fly_dir != 0.f) {
+			float fly_speed = 6.f;
+			_camera.apply_movement(TICK_DT * fly_speed * fly_dir * _camera.up());
+		}
+
+
 	}
 
 	void zCore::process_mouse_inputs() {

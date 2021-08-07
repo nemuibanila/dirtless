@@ -64,6 +64,10 @@ namespace zebra {
 		auto right = glm::normalize(glm::cross(forward(), vec::up));
 		return right;
 	}
+
+	glm::vec3 PerspectiveCamera::up() {
+		return vec::up;
+	}
 }
 
 
