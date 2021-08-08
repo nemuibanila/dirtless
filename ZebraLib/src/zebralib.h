@@ -27,6 +27,9 @@ namespace zebra {
 
 		VkCommandPool pool;
 		VkCommandBuffer buf;
+
+		AllocBuffer camera_buffer;
+		VkDescriptorSet global_descriptor;
 	};
 	
 	struct VulkanNative {
@@ -49,6 +52,9 @@ namespace zebra {
 		VkImageView depth_image_view;
 		AllocImage depth_image;
 		VkFormat depth_format;
+
+		VkDescriptorSetLayout global_set_layout;
+		VkDescriptorPool descriptor_pool;
 	};
 
 	struct Window {
@@ -171,6 +177,8 @@ namespace zebra {
 		bool init_swapchain();
 		bool init_framebuffers();
 		bool init_pipelines();
+		void init_descriptor_set_layouts();
+		void init_descriptor_sets();
 		void init_scene();
 		bool recreate_swapchain();
 		bool create_window();
@@ -189,6 +197,8 @@ namespace zebra {
 		Material* create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name);
 		Material* get_material(const std::string& name);
 		Mesh* get_mesh(const std::string& name);
+		AllocBuffer create_buffer(size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage);
+
 		bool advance_frame();
 		PerFrameData& current_frame();
 
@@ -199,7 +209,7 @@ namespace zebra {
 		std::unordered_map<std::string, Material> _materials;
 		std::unordered_map<std::string, Mesh> _meshes;
 
-		PerspectiveCamera _camera;
+		FirstPersonPerspectiveCamera _camera;
 
 		Mesh _triangle_mesh;
 		Mesh _monkey_mesh;
