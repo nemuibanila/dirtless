@@ -8,10 +8,10 @@
 #include <glm/ext/quaternion_transform.hpp>
 
 namespace zebra {
-	void PerspectiveCamera::apply_movement(glm::vec3 dv) {
+	void FirstPersonPerspectiveCamera::apply_movement(glm::vec3 dv) {
 		_acc += dv;
 	}
-	void PerspectiveCamera::apply_rotation(float _phi, float _theta) {
+	void FirstPersonPerspectiveCamera::apply_rotation(float _phi, float _theta) {
 		//this->phi += _phi;
 
 
@@ -33,7 +33,7 @@ namespace zebra {
 		}
 		_ry = _ry * glm::angleAxis(_theta, vec::up);
 	}
-	void PerspectiveCamera::tick() {
+	void FirstPersonPerspectiveCamera::tick() {
 		// smoothstep
 		auto npos = glm::mix(_pos, _pos + _acc, (1.f/movement_smoothing));
 		_acc = _acc - (npos - _pos); 
@@ -53,33 +53,33 @@ namespace zebra {
 		apply_rotation(accx, accy);
 	}
 
-	glm::mat4 PerspectiveCamera::view() {
+	glm::mat4 FirstPersonPerspectiveCamera::view() {
 		return glm::toMat4(rotation()) * glm::translate(glm::mat4(1.f), _pos);
 	}
 
-	glm::quat PerspectiveCamera::rotation() {
+	glm::quat FirstPersonPerspectiveCamera::rotation() {
 		return _rx * _ry * base_rotation;
 	}
 
-	glm::mat4 PerspectiveCamera::projection() {
+	glm::mat4 FirstPersonPerspectiveCamera::projection() {
 		auto projection = glm::perspective(povy, aspect, z_near, z_far);
 		projection[1][1] *= -1; // for vulkan coordinates
 		return projection;
 	}
 
-	glm::vec3 PerspectiveCamera::forward() {
+	glm::vec3 FirstPersonPerspectiveCamera::forward() {
 		// CHECK THIS
 		auto forward = glm::normalize(_ry) * vec::forward;
 		forward.z = -forward.z;
 		return forward;
 	}
 
-	glm::vec3 PerspectiveCamera::right() {
+	glm::vec3 FirstPersonPerspectiveCamera::right() {
 		auto right = glm::normalize(glm::cross(forward(), vec::up));
 		return right;
 	}
 
-	glm::vec3 PerspectiveCamera::up() {
+	glm::vec3 FirstPersonPerspectiveCamera::up() {
 		return vec::up;
 	}
 }
