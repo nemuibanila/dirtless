@@ -21,6 +21,9 @@
 #include "g_pipeline.h"
 #include "g_mesh.h"
 #include "g_vec.h"
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <glm/ext/matrix_transform.hpp>
@@ -41,6 +44,7 @@ namespace zebra {
 		glfwSetWindowUserPointer(_window.handle, this);
 		glfwSetKeyCallback(_window.handle, zCore::_glfw_key_callback_caller);
 		glfwSetCursorPosCallback(_window.handle, zCore::_glfw_mouse_position_callback_caller);
+
 		double x, y;
 		glfwGetCursorPos(_window.handle, &x, &y);
 		_mouse_old_pos = { x, y };
@@ -54,14 +58,7 @@ namespace zebra {
 		};
 
 		this->action_map[TOGGLE_ABSOLUTE_MOUSE] = [this]() {
-			this->cursor_use_absolute_position ^= 1;
-			u32 cursor_mode;
-			if (this->cursor_use_absolute_position) {
-				cursor_mode = GLFW_CURSOR_NORMAL;
-			} else {
-				cursor_mode = GLFW_CURSOR_DISABLED;
-			}
-			glfwSetInputMode(_window.handle, GLFW_CURSOR, cursor_mode);
+			set_cursor_absolute(this->cursor_use_absolute_position ^ 1);
 		};
 
 		KeyInput toggle_absolute{
@@ -119,6 +116,12 @@ namespace zebra {
 		};
 		key_inputs.push_back(down);
 
+		setup_draw();
+
+		// -- init imgui late, to overwrite callbacks
+		init_imgui();
+		set_cursor_absolute(false);
+
 		app_loop();
 		return true;
 	}
@@ -141,6 +144,7 @@ namespace zebra {
 
 		DBG("per frame data");
 		if (!this->init_per_frame_data()) return false;
+		init_upload_context();
 
 		DBG("render pass");
 		if (!this->init_default_renderpass()) return false;
@@ -358,7 +362,7 @@ namespace zebra {
 		swapchain_delq.push_function([=]() {
 			vkDestroyImageView(_vk.device(), _vk.depth_image_view, nullptr);
 			vmaDestroyImage(_vk.allocator, _vk.depth_image.image, _vk.depth_image.allocation);
-		});
+			});
 
 		return true;
 	}
@@ -411,8 +415,8 @@ namespace zebra {
 		for (u32 i = 0; i < ext_count; i++) {
 			builder.enable_extension(extensions[i]);
 		}
-			
-		auto inst_ret =	builder.build();
+
+		auto inst_ret = builder.build();
 		if (!inst_ret) {
 			DBG("instance err: " << inst_ret.error().message());
 			return false;
@@ -455,7 +459,7 @@ namespace zebra {
 		vmaCreateAllocator(&allocate_info, &_vk.allocator);
 		main_delq.push_function([=]() {
 			vmaDestroyAllocator(_vk.allocator);
-		});
+			});
 
 		DBG("complete and ready to use.");
 		return true;
@@ -582,6 +586,24 @@ namespace zebra {
 		return true;
 	}
 
+	void zCore::init_upload_context() {
+		VkFenceCreateInfo fence_create_info = {
+			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+		};
+		vkCreateFence(_vk.device(), &fence_create_info, nullptr, &_up.uploadF);
+		auto command_pool_info = vki::command_pool_create_info(
+			_vk.vkb_device.get_queue_index(vkb::QueueType::graphics).value());
+		vkCreateCommandPool(_vk.device(), &command_pool_info, nullptr, &_up.pool);
+		
+		main_delq.push_function([=]() {
+			vkDestroyFence(_vk.device(), _up.uploadF, nullptr);
+			vkDestroyCommandPool(_vk.device(), _up.pool, nullptr);
+			});
+
+	}
+
 	void zCore::init_descriptor_set_layouts() {
 		std::vector<VkDescriptorPoolSize> sizes = {
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10 },
@@ -654,14 +676,114 @@ namespace zebra {
 		}
 	}
 
+	void zCore::vk_immediate(std::function<void(VkCommandBuffer cmd)>&& function) {
+		// update for seperate context
+		VkCommandBufferAllocateInfo cmd_alloc_info = vki::command_buffer_allocate_info(_up.pool);
+		VkCommandBuffer cmd;
+		vkAllocateCommandBuffers(_vk.device(), &cmd_alloc_info, &cmd);
+		auto begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+		vkBeginCommandBuffer(cmd, &begin_info);
+		function(cmd);
+		vkEndCommandBuffer(cmd);
+		VkSubmitInfo submit = {
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.pNext = nullptr,
+			.waitSemaphoreCount = 0,
+			.pWaitSemaphores = nullptr,
+			.pWaitDstStageMask = 0,
+			.commandBufferCount = 1,
+			.pCommandBuffers = &cmd,
+			.signalSemaphoreCount = 0,
+			.pSignalSemaphores = nullptr,
+		};
+
+		vkQueueSubmit(_vk.graphics_queue, 1, &submit, _up.uploadF);
+		vkWaitForFences(_vk.device(), 1, &_up.uploadF, true, 999'999'999'999);
+		vkResetFences(_vk.device(), 1, &_up.uploadF);
+
+		vkResetCommandPool(_vk.device(), _up.pool, 0);
+	}
+
+	void zCore::init_imgui() {
+		VkDescriptorPoolSize pool_sizes[] = {
+			{ VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+			{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 },
+		};
+
+		VkDescriptorPoolCreateInfo pool_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+			.maxSets = 1000,
+			.poolSizeCount = std::size(pool_sizes),
+			.pPoolSizes = pool_sizes,
+		};
+
+		VkDescriptorPool imgui_pool;
+		VK_CHECK(vkCreateDescriptorPool(_vk.device(), &pool_info, nullptr, &imgui_pool));
+		ImGui::CreateContext();
+		ImGui_ImplGlfw_InitForVulkan(_window.handle, true);
+		ImGui_ImplVulkan_InitInfo init_info = {
+			.Instance = _vk.instance(),
+			.PhysicalDevice = _vk.vkb_device.physical_device.physical_device,
+			.Device = _vk.device(),
+			.Queue = _vk.graphics_queue,
+			.DescriptorPool = imgui_pool,
+			.MinImageCount = 3,
+			.ImageCount = 3,
+			.MSAASamples = VK_SAMPLE_COUNT_1_BIT,
+			.CheckVkResultFn = [](VkResult err) {
+				if (!err) return;
+				DBG("vk error: " << err);
+				},
+		};
+
+		ImGui_ImplVulkan_Init(&init_info, _vk.renderpass);
+		vk_immediate([=](VkCommandBuffer cmd) {
+			ImGui_ImplVulkan_CreateFontsTexture(cmd);
+			});
+
+		ImGui_ImplVulkan_DestroyFontUploadObjects();
+		main_delq.push_function([=]() {
+			vkDestroyDescriptorPool(_vk.device(), imgui_pool, nullptr);
+			ImGui_ImplVulkan_Shutdown();
+			});
+
+	}
+
 	// INPUT
 
+	void zCore::set_cursor_absolute(bool absolute) {
+		this->cursor_use_absolute_position = absolute;
+		u32 cursor_mode;
+		if (this->cursor_use_absolute_position) {
+			cursor_mode = GLFW_CURSOR_NORMAL;
+			ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+		} else {
+			cursor_mode = GLFW_CURSOR_DISABLED;
+			ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouse;
+		}
+		glfwSetInputMode(_window.handle, GLFW_CURSOR, cursor_mode);
+	}
+
 	void zCore::_glfw_key_callback_caller(GLFWwindow* window, i32 key, i32 scancode, i32 action, i32 mods) {
-		zCore* zcore = (zCore*)glfwGetWindowUserPointer(window);
-		zcore->_glfw_key_callback(window, key, scancode, action, mods);
+		auto io = ImGui::GetIO();
+		if (!io.WantCaptureKeyboard) {
+			zCore* zcore = (zCore*)glfwGetWindowUserPointer(window);
+			zcore->_glfw_key_callback(window, key, scancode, action, mods);
+		}
 	}
 
 	void zCore::_glfw_key_callback(GLFWwindow* window, i32 key, i32 scancode, i32 action, i32 mods) {
+
 		Key k{ key };
 		KeyCondition cond;
 		KeyModifier mod = static_cast<KeyModifier>(mods);
@@ -692,6 +814,9 @@ namespace zebra {
 	}
 
 	void zCore::_glfw_mouse_position_callback_caller(GLFWwindow* window, double x, double y) {
+		ImGuiIO& io = ImGui::GetIO(); 
+		DBG("x: " << ImGui::GetIO().MousePos.x << "y: " << ImGui::GetIO().MousePos.y << "");
+
 		zCore* zcore = (zCore*)glfwGetWindowUserPointer(window);
 		zcore->_glfw_mouse_position_callback(window, x, y);
 	}
@@ -887,137 +1012,138 @@ namespace zebra {
 		return buf;
 	}
 
-	void zCore::draw_loop(std::stop_token stoken) {
-		auto old_frame_start = std::chrono::steady_clock::now();
+	void zCore::setup_draw() {
+		_df.old_frame_start = std::chrono::steady_clock::now();
+		_df.global_current_time = 0.0;
+	}
 
+	void zCore::draw() {
+		
 		auto monitor = glfwGetPrimaryMonitor();
 		auto refresh_rate = glfwGetVideoMode(monitor)->refreshRate;
 		auto dt = 1.f / 100.f;
-		double global_current_time = 0.0;
+		auto start_frame = std::chrono::high_resolution_clock::now();
+		auto time_passed = start_frame - _df.old_frame_start;
+		auto time_passed_float = std::chrono::duration<float>(time_passed).count();
+		_df.global_current_time += time_passed_float;
 
-		while (true) {
-			auto start_frame = std::chrono::high_resolution_clock::now();
-			auto time_passed = start_frame - old_frame_start;
-			auto time_passed_float = std::chrono::duration<float>(time_passed).count();
-			global_current_time += time_passed_float;
+		if(vkGetFenceStatus(_vk.device(), current_frame().renderF) == VK_SUCCESS)
+		{ // actual rendering
+			vkResetFences(_vk.device(), 1, &current_frame().renderF);
 
-			if(vkGetFenceStatus(_vk.device(), current_frame().renderF) == VK_SUCCESS)
-			{ // actual rendering
-				vkResetFences(_vk.device(), 1, &current_frame().renderF);
-				uint32_t swapchain_image_idx;
-				auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
+			uint32_t swapchain_image_idx;
+			auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
 
-				if (acquire_result == VK_SUCCESS) {
-					// we have an image to render to
-					VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
-					VkCommandBufferBeginInfo cmd_begin_info = {
-						.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-						.pNext = nullptr,
-						.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-						.pInheritanceInfo = nullptr,
-					};
+			if (acquire_result == VK_SUCCESS) {
+				// we have an image to render to
+				VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
+				VkCommandBufferBeginInfo cmd_begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
-					VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
-					VkClearValue clear_value;
-					float flash = (float)abs(sin(global_current_time));
-					clear_value.color = { {0.f, 0.f, flash, 1.f} };
+				VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
+				VkClearValue clear_value;
+				float flash = (float)abs(sin(_df.global_current_time));
+				clear_value.color = { {0.f, 0.f, flash, 1.f} };
 
-					VkClearValue depth_clear;
-					depth_clear.depthStencil.depth = 1.f;
+				VkClearValue depth_clear;
+				depth_clear.depthStencil.depth = 1.f;
 
-					auto clear_values = { clear_value, depth_clear };
+				auto clear_values = { clear_value, depth_clear };
 
-					VkRenderPassBeginInfo rp_info = {
-						.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-						.pNext = nullptr,
-						.renderPass = _vk.renderpass,
-						.framebuffer = _vk.framebuffers[swapchain_image_idx],
-						.renderArea = {
-							.offset = {
-							.x = 0,
-							.y = 0,
-					},
-					.extent = _window.vkb_swapchain.extent,
-					},
-					.clearValueCount = (u32)clear_values.size(),
-					.pClearValues = clear_values.begin(),
-					};
+				VkRenderPassBeginInfo rp_info = {
+					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+					.pNext = nullptr,
+					.renderPass = _vk.renderpass,
+					.framebuffer = _vk.framebuffers[swapchain_image_idx],
+					.renderArea = {
+						.offset = {
+						.x = 0,
+						.y = 0,
+				},
+				.extent = _window.vkb_swapchain.extent,
+				},
+				.clearValueCount = (u32)clear_values.size(),
+				.pClearValues = clear_values.begin(),
+				};
 
-					vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
+				vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-					// -- dynamic state
+				// -- dynamic state
 
-					VkViewport viewport = {};
-					viewport.height = (float)_window.extent().height;
-					viewport.width = (float)_window.extent().width;
-					viewport.minDepth = 0.0f;
-					viewport.maxDepth = 1.0f;
-					viewport.x = 0;
-					viewport.y = 0;
+				VkViewport viewport = {};
+				viewport.height = (float)_window.extent().height;
+				viewport.width = (float)_window.extent().width;
+				viewport.minDepth = 0.0f;
+				viewport.maxDepth = 1.0f;
+				viewport.x = 0;
+				viewport.y = 0;
 
-					vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
+				vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
 
-					VkRect2D scissor = {
-						.offset = { 0, 0 },
-						.extent = _window.extent(),
-					};
+				VkRect2D scissor = {
+					.offset = { 0, 0 },
+					.extent = _window.extent(),
+				};
 
-					vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
+				vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
 
-					// -- end dynamic state
+				// -- end dynamic state
 
-					// -- camera
+				// -- camera
 
-					_camera.aspect = viewport.width / viewport.height;
+				_camera.aspect = viewport.width / viewport.height;
 
-					//
+				//
 
-					draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
+				draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
 
-					vkCmdEndRenderPass(current_frame().buf);
-
-					VK_CHECK(vkEndCommandBuffer(current_frame().buf));
-
-					VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-					VkSubmitInfo submit_info = {
-						.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-						.pNext = nullptr,
-						.waitSemaphoreCount = 1,
-						.pWaitSemaphores = &current_frame().presentS,
-						.pWaitDstStageMask = &wait_stage,
-						.commandBufferCount = 1,
-						.pCommandBuffers = &current_frame().buf,
-						.signalSemaphoreCount = 1,
-						.pSignalSemaphores = &current_frame().renderS,
-					};
-
-					VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, current_frame().renderF));
-					VkPresentInfoKHR present_info = {
-						.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-						.pNext = nullptr,
-						.waitSemaphoreCount = 1,
-						.pWaitSemaphores = &current_frame().renderS,
-						.swapchainCount = 1,
-						.pSwapchains = &_window.vkb_swapchain.swapchain,
-						.pImageIndices = &swapchain_image_idx,
-					};
-
-					vkQueuePresentKHR(_vk.graphics_queue, &present_info);
-					advance_frame();
-				} else if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
-					this->recreate_swapchain();
+				// -- imgui
+				ImGui_ImplVulkan_NewFrame();
+				ImGui_ImplGlfw_NewFrame();
+				ImGui::NewFrame();
+				ImGui::ShowDemoWindow();
+				ImGui::Render();
+				auto imgui_draw_data = ImGui::GetDrawData();
+				if (imgui_draw_data != nullptr) {
+					ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, current_frame().buf);
 				}
-			}
+				// --
 
-			if (stoken.stop_requested()) {
-				DBG("stop requested");
-				std::this_thread::sleep_for(std::chrono::seconds(1));
-				return;
-			}
+				vkCmdEndRenderPass(current_frame().buf);
 
-			old_frame_start = start_frame;
-			std::this_thread::yield();
-		};
+				VK_CHECK(vkEndCommandBuffer(current_frame().buf));
+
+				VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+				VkSubmitInfo submit_info = {
+					.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+					.pNext = nullptr,
+					.waitSemaphoreCount = 1,
+					.pWaitSemaphores = &current_frame().presentS,
+					.pWaitDstStageMask = &wait_stage,
+					.commandBufferCount = 1,
+					.pCommandBuffers = &current_frame().buf,
+					.signalSemaphoreCount = 1,
+					.pSignalSemaphores = &current_frame().renderS,
+				};
+
+				VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, current_frame().renderF));
+				VkPresentInfoKHR present_info = {
+					.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+					.pNext = nullptr,
+					.waitSemaphoreCount = 1,
+					.pWaitSemaphores = &current_frame().renderS,
+					.swapchainCount = 1,
+					.pSwapchains = &_window.vkb_swapchain.swapchain,
+					.pImageIndices = &swapchain_image_idx,
+				};
+
+				vkQueuePresentKHR(_vk.graphics_queue, &present_info);
+				advance_frame();
+			} else if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
+				this->recreate_swapchain();
+			}
+		}
+
+		_df.old_frame_start = start_frame;
 	}
 
 	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
@@ -1066,14 +1192,12 @@ namespace zebra {
 	// APP
 	void zCore::app_loop() {
 
-		std::jthread draw_thread([this](std::stop_token stoken){ 
-			this->draw_loop(stoken);
-		});
 		auto old_tick = std::chrono::steady_clock::now();
 		auto tick_acc = 0.f;
 		auto dt = TICK_DT;
 
 		while (!glfwWindowShouldClose(_window.handle)) {
+			glfwPollEvents();
 			if (die) {
 				DBG("time to die");
 				return;
@@ -1089,14 +1213,11 @@ namespace zebra {
 				process_mouse_inputs();
 				_camera.tick();
 			}
-			old_tick = now_tick;
+			draw();
 
-			glfwPollEvents();
+			old_tick = now_tick;
 			std::this_thread::yield();
 		}
-
-		draw_thread.request_stop();
-		draw_thread.join();
 		this->cleanup();
 	}
 }

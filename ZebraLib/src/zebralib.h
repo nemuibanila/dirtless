@@ -31,6 +31,11 @@ namespace zebra {
 		AllocBuffer camera_buffer;
 		VkDescriptorSet global_descriptor;
 	};
+
+	struct UploadContext {
+		VkFence uploadF;
+		VkCommandPool pool;
+	};
 	
 	struct VulkanNative {
 		vkb::Instance vkb_instance;
@@ -69,6 +74,11 @@ namespace zebra {
 			return vkb_swapchain.extent;
 		};
 
+	};
+
+	struct DrawFrameInfo {
+		std::chrono::steady_clock::time_point old_frame_start;
+		double global_current_time;
 	};
 
 	struct DeletionQueue
@@ -147,6 +157,8 @@ namespace zebra {
 
 		// -- rendering
 		VulkanNative _vk;
+		UploadContext _up;
+		DrawFrameInfo _df;
 		Window _window;
 		std::array<PerFrameData, FRAME_OVERLAP> frames;
 		size_t frame_counter = 0;
@@ -168,6 +180,7 @@ namespace zebra {
 		// holds are deferred to the next tick
 		void process_key_inputs();
 		void process_mouse_inputs();
+		void set_cursor_absolute(bool absolute);
 
 		// Gfx
 		bool init_vulkan();
@@ -179,12 +192,15 @@ namespace zebra {
 		bool init_pipelines();
 		void init_descriptor_set_layouts();
 		void init_descriptor_sets();
+		void init_upload_context();
 		void init_scene();
+		void init_imgui();
 		bool recreate_swapchain();
 		bool create_window();
 		
 		void app_loop();
-		void draw_loop(std::stop_token stoken);
+		void setup_draw();
+		void draw();
 		void draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects);
 		void load_meshes();
 
@@ -198,6 +214,7 @@ namespace zebra {
 		Material* get_material(const std::string& name);
 		Mesh* get_mesh(const std::string& name);
 		AllocBuffer create_buffer(size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage);
+		void vk_immediate(std::function<void(VkCommandBuffer cmd)>&& function);
 
 		bool advance_frame();
 		PerFrameData& current_frame();
