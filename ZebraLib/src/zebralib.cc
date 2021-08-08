@@ -161,7 +161,7 @@ namespace zebra {
 		auto rotation_initial = glm::quat(1.f, 0.f, 0.f, 0.f);
 		_camera = {
 			._pos = glm::vec3(0.f),
-			.smoothing = 4.f,
+			.movement_smoothing = 4.f,
 			.aspect = 16.f / 9.f,
 			.povy = 70.f,
 			.z_near = 0.01f,
@@ -872,6 +872,12 @@ namespace zebra {
 					vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
 
 					// -- end dynamic state
+
+					// -- camera
+
+					_camera.aspect = viewport.width / viewport.height;
+
+					//
 
 					draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
 

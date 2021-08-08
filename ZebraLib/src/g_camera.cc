@@ -18,6 +18,14 @@ namespace zebra {
 		//this->phi = glm::abs(phi) > phi_limit ? glm::sign(phi) * phi_limit : phi;
 		//this->theta += _theta;
 
+		auto defer_x = (1.f - (1.f / camera_smoothing)) * _phi;
+		_rx_acc += defer_x;
+		_phi -= defer_x;
+
+		auto defer_y = (1.f - (1.f / camera_smoothing)) * _theta;
+		_ry_acc += defer_y;
+		_theta -= defer_y;
+
 		_rx = _rx * glm::angleAxis(_phi, vec::right);
 		auto angle = glm::angle(_rx);
 		if (glm::abs(angle) > glm::half_pi<float>()) {
@@ -27,16 +35,22 @@ namespace zebra {
 	}
 	void PerspectiveCamera::tick() {
 		// smoothstep
-		auto npos = glm::mix(_pos, _pos + _acc, (1.f/smoothing));
+		auto npos = glm::mix(_pos, _pos + _acc, (1.f/movement_smoothing));
 		_acc = _acc - (npos - _pos); 
 		_pos = npos;
 
-		// uprighting camera rotation
+		// uprighting camera rotation -- not 
+		//const float correction_eps = 0.0001f;
+		//auto current_up = rotation() * vec::up;     
+		//DBG("up: " << current_up.x << " " << current_up.y << " " << current_up.z);
 
-		const float correction_eps = 0.0001f;
-		auto current_up = rotation() * vec::up;     
-		   
-		DBG("up: " << current_up.x << " " << current_up.y << " " << current_up.z);
+		// camera smoothing 
+		auto accx = _rx_acc;
+		_rx_acc = 0.f;
+
+		auto accy = _ry_acc;
+		_ry_acc = 0.f;
+		apply_rotation(accx, accy);
 	}
 
 	glm::mat4 PerspectiveCamera::view() {
