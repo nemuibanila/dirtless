@@ -22,7 +22,7 @@ add_executable (zebralib
 set_property(TARGET zebralib PROPERTY VS_DEBUFGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:zebralib")
 
 target_include_directories(zebralib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(zebralib vkbootstrap vma glm tinyobjloader imgui stb_image magic_enum)
+target_link_libraries(zebralib vkbootstrap vma glm tinyobjloader imgui stb_image magic_enum boost_headers)
 target_link_libraries(zebralib Vulkan::Vulkan glfw)
 
 add_dependencies(zebralib Shaders)

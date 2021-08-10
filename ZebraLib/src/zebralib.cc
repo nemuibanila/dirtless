@@ -29,6 +29,7 @@
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/scalar_constants.hpp>
+#include <boost/circular_buffer.hpp>
 
 namespace zebra {
 
@@ -172,8 +173,6 @@ namespace zebra {
 			.z_near = 0.01f,
 			.z_far = 200.f,
 		};
-
-
 		return true;
 	}
 
@@ -377,6 +376,7 @@ namespace zebra {
 			if (w == 0 && h == 0) {
 				DBG("window is currently 0-sized");
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				glfwPollEvents();
 			}
 		} while (w == 0 && h == 0);
 
@@ -814,8 +814,8 @@ namespace zebra {
 	}
 
 	void zCore::_glfw_mouse_position_callback_caller(GLFWwindow* window, double x, double y) {
-		ImGuiIO& io = ImGui::GetIO(); 
-		DBG("x: " << ImGui::GetIO().MousePos.x << "y: " << ImGui::GetIO().MousePos.y << "");
+		//ImGuiIO& io = ImGui::GetIO(); 
+		//DBG("x: " << ImGui::GetIO().MousePos.x << "y: " << ImGui::GetIO().MousePos.y << "");
 
 		zCore* zcore = (zCore*)glfwGetWindowUserPointer(window);
 		zcore->_glfw_mouse_position_callback(window, x, y);
@@ -854,8 +854,8 @@ namespace zebra {
 			movement_dir += glm::vec2{ 1.f, 0.f };
 		}
 
-		DBG("cpos " << _camera._pos);
-		DBG("cfwd " << _camera.forward());
+		//DBG("cpos " << _camera._pos);
+		//DBG("cfwd " << _camera.forward());
 		if (movement_dir != glm::vec2{ 0.f, 0.f }) {
 			auto direction = glm::normalize(_camera.right() * movement_dir.x + _camera.forward() * movement_dir.y);
 			float speed = 4.f;
@@ -1022,128 +1022,112 @@ namespace zebra {
 		auto monitor = glfwGetPrimaryMonitor();
 		auto refresh_rate = glfwGetVideoMode(monitor)->refreshRate;
 		auto dt = 1.f / 100.f;
-		auto start_frame = std::chrono::high_resolution_clock::now();
-		auto time_passed = start_frame - _df.old_frame_start;
-		auto time_passed_float = std::chrono::duration<float>(time_passed).count();
-		_df.global_current_time += time_passed_float;
+		vkResetFences(_vk.device(), 1, &current_frame().renderF);
 
-		if(vkGetFenceStatus(_vk.device(), current_frame().renderF) == VK_SUCCESS)
-		{ // actual rendering
-			vkResetFences(_vk.device(), 1, &current_frame().renderF);
+		uint32_t swapchain_image_idx;
+		auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
 
-			uint32_t swapchain_image_idx;
-			auto acquire_result = vkAcquireNextImageKHR(_vk.device(), _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
+		if (acquire_result == VK_SUCCESS) {
+			// we have an image to render to
+			VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
+			VkCommandBufferBeginInfo cmd_begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
-			if (acquire_result == VK_SUCCESS) {
-				// we have an image to render to
-				VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
-				VkCommandBufferBeginInfo cmd_begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+			VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
+			VkClearValue clear_value;
+			float flash = (float)abs(sin(_df.global_current_time));
+			clear_value.color = { {0.f, 0.f, flash, 1.f} };
 
-				VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
-				VkClearValue clear_value;
-				float flash = (float)abs(sin(_df.global_current_time));
-				clear_value.color = { {0.f, 0.f, flash, 1.f} };
+			VkClearValue depth_clear;
+			depth_clear.depthStencil.depth = 1.f;
 
-				VkClearValue depth_clear;
-				depth_clear.depthStencil.depth = 1.f;
+			auto clear_values = { clear_value, depth_clear };
 
-				auto clear_values = { clear_value, depth_clear };
+			VkRenderPassBeginInfo rp_info = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.pNext = nullptr,
+				.renderPass = _vk.renderpass,
+				.framebuffer = _vk.framebuffers[swapchain_image_idx],
+				.renderArea = {
+					.offset = {
+					.x = 0,
+					.y = 0,
+			},
+			.extent = _window.vkb_swapchain.extent,
+			},
+			.clearValueCount = (u32)clear_values.size(),
+			.pClearValues = clear_values.begin(),
+			};
 
-				VkRenderPassBeginInfo rp_info = {
-					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-					.pNext = nullptr,
-					.renderPass = _vk.renderpass,
-					.framebuffer = _vk.framebuffers[swapchain_image_idx],
-					.renderArea = {
-						.offset = {
-						.x = 0,
-						.y = 0,
-				},
-				.extent = _window.vkb_swapchain.extent,
-				},
-				.clearValueCount = (u32)clear_values.size(),
-				.pClearValues = clear_values.begin(),
-				};
+			vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-				vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
+			// -- dynamic state
 
-				// -- dynamic state
+			VkViewport viewport = {};
+			viewport.height = (float)_window.extent().height;
+			viewport.width = (float)_window.extent().width;
+			viewport.minDepth = 0.0f;
+			viewport.maxDepth = 1.0f;
+			viewport.x = 0;
+			viewport.y = 0;
 
-				VkViewport viewport = {};
-				viewport.height = (float)_window.extent().height;
-				viewport.width = (float)_window.extent().width;
-				viewport.minDepth = 0.0f;
-				viewport.maxDepth = 1.0f;
-				viewport.x = 0;
-				viewport.y = 0;
+			vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
 
-				vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
+			VkRect2D scissor = {
+				.offset = { 0, 0 },
+				.extent = _window.extent(),
+			};
 
-				VkRect2D scissor = {
-					.offset = { 0, 0 },
-					.extent = _window.extent(),
-				};
+			vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
 
-				vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
+			// -- end dynamic state
 
-				// -- end dynamic state
+			// -- camera
 
-				// -- camera
+			_camera.aspect = viewport.width / viewport.height;
 
-				_camera.aspect = viewport.width / viewport.height;
+			//
 
-				//
+			draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
 
-				draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
-
-				// -- imgui
-				ImGui_ImplVulkan_NewFrame();
-				ImGui_ImplGlfw_NewFrame();
-				ImGui::NewFrame();
-				ImGui::ShowDemoWindow();
-				ImGui::Render();
-				auto imgui_draw_data = ImGui::GetDrawData();
-				if (imgui_draw_data != nullptr) {
-					ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, current_frame().buf);
-				}
-				// --
-
-				vkCmdEndRenderPass(current_frame().buf);
-
-				VK_CHECK(vkEndCommandBuffer(current_frame().buf));
-
-				VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-				VkSubmitInfo submit_info = {
-					.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-					.pNext = nullptr,
-					.waitSemaphoreCount = 1,
-					.pWaitSemaphores = &current_frame().presentS,
-					.pWaitDstStageMask = &wait_stage,
-					.commandBufferCount = 1,
-					.pCommandBuffers = &current_frame().buf,
-					.signalSemaphoreCount = 1,
-					.pSignalSemaphores = &current_frame().renderS,
-				};
-
-				VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, current_frame().renderF));
-				VkPresentInfoKHR present_info = {
-					.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-					.pNext = nullptr,
-					.waitSemaphoreCount = 1,
-					.pWaitSemaphores = &current_frame().renderS,
-					.swapchainCount = 1,
-					.pSwapchains = &_window.vkb_swapchain.swapchain,
-					.pImageIndices = &swapchain_image_idx,
-				};
-
-				vkQueuePresentKHR(_vk.graphics_queue, &present_info);
-				advance_frame();
-			} else if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
-				this->recreate_swapchain();
+			auto imgui_draw_data = ImGui::GetDrawData();
+			if (imgui_draw_data != nullptr) {
+				ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, current_frame().buf);
 			}
-		}
+			// --
 
-		_df.old_frame_start = start_frame;
+			vkCmdEndRenderPass(current_frame().buf);
+
+			VK_CHECK(vkEndCommandBuffer(current_frame().buf));
+
+			VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			VkSubmitInfo submit_info = {
+				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+				.pNext = nullptr,
+				.waitSemaphoreCount = 1,
+				.pWaitSemaphores = &current_frame().presentS,
+				.pWaitDstStageMask = &wait_stage,
+				.commandBufferCount = 1,
+				.pCommandBuffers = &current_frame().buf,
+				.signalSemaphoreCount = 1,
+				.pSignalSemaphores = &current_frame().renderS,
+			};
+
+			VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, current_frame().renderF));
+			VkPresentInfoKHR present_info = {
+				.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+				.pNext = nullptr,
+				.waitSemaphoreCount = 1,
+				.pWaitSemaphores = &current_frame().renderS,
+				.swapchainCount = 1,
+				.pSwapchains = &_window.vkb_swapchain.swapchain,
+				.pImageIndices = &swapchain_image_idx,
+			};
+
+			vkQueuePresentKHR(_vk.graphics_queue, &present_info);
+			advance_frame();
+		} else if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
+			this->recreate_swapchain();
+		}
 	}
 
 	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
@@ -1196,6 +1180,9 @@ namespace zebra {
 		auto tick_acc = 0.f;
 		auto dt = TICK_DT;
 
+		boost::circular_buffer<float> frame_times(250);
+		
+
 		while (!glfwWindowShouldClose(_window.handle)) {
 			glfwPollEvents();
 			if (die) {
@@ -1213,7 +1200,34 @@ namespace zebra {
 				process_mouse_inputs();
 				_camera.tick();
 			}
-			draw();
+
+			// -- drawing and animation
+
+			if (vkGetFenceStatus(_vk.device(), current_frame().renderF) == VK_SUCCESS) 	{ // actual rendering
+				auto start_frame = std::chrono::high_resolution_clock::now();
+				auto anim_dt = start_frame - _df.old_frame_start;
+				auto anim_dt_float = std::chrono::duration<float>(anim_dt).count();
+				frame_times.push_back(anim_dt_float);
+				_df.global_current_time += anim_dt_float;
+
+				// -- imgui
+				ImGui_ImplVulkan_NewFrame();
+				ImGui_ImplGlfw_NewFrame();
+				ImGui::NewFrame();
+				ImGui::Begin("My first tool", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+				ImGui::PlotLines("", frame_times.linearize(), frame_times.size(), 0, "Frame DT", 0.f, 0.1f, ImVec2(250, 100), 4);
+				ImGui::Text("Hello, world %d", 123);
+				ImGui::End();
+
+				ImGui::Render();
+
+				// -- vulkan
+				draw();
+
+
+				_df.old_frame_start = start_frame;
+			}
+
 
 			old_tick = now_tick;
 			std::this_thread::yield();

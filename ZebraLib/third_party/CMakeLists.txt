@@ -3,10 +3,10 @@ set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
-
 add_library(vkbootstrap STATIC)
 add_library(glm INTERFACE)
 add_library(vma INTERFACE)
+add_library(boost_headers INTERFACE)
 add_library(stb_image INTERFACE)
 add_library(magic_enum INTERFACE)
 add_library(tinyobjloader STATIC)
@@ -23,6 +23,7 @@ target_link_libraries(vkbootstrap PUBLIC Vulkan::Vulkan $<$<BOOL:UNIX>:${CMAKE_D
 target_include_directories(vma INTERFACE vma)
 target_include_directories(glm INTERFACE glm)
 target_include_directories(magic_enum INTERFACE magic_enum)
+target_include_directories(boost_headers INTERFACE E:\\Gamedev\\Deps\\boost_1_76_0)
 
 add_subdirectory("glfw")
 
