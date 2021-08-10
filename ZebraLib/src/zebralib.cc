@@ -461,6 +461,9 @@ namespace zebra {
 			vmaDestroyAllocator(_vk.allocator);
 			});
 
+		vkGetPhysicalDeviceProperties(_vk.vkb_device.physical_device.physical_device, &_vk.gpu_properties);
+		DBG("gpu minimum buffer alignment: " << _vk.gpu_properties.limits.minUniformBufferOffsetAlignment);
+
 		DBG("complete and ready to use.");
 		return true;
 	}
@@ -560,15 +563,16 @@ namespace zebra {
 		_renderables.push_back(monkey);
 		for (int x = -20; x <= 20; x++) {
 			for (int y = -20; y <= 20; y++) {
+				for (int z = -4; z <= 4; z++) {
+					RenderObject tri;
+					tri.mesh = get_mesh("triangle");
+					tri.material = get_material("defaultmesh");
+					glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x, z, y));
+					glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
+					tri.transform = translation * scale;
 
-				RenderObject tri;
-				tri.mesh = get_mesh("triangle");
-				tri.material = get_material("defaultmesh");
-				glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x, 0, y));
-				glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
-				tri.transform = translation * scale;
-
-				_renderables.push_back(tri);
+					_renderables.push_back(tri);
+				}
 			}
 		}
 	}
@@ -673,6 +677,10 @@ namespace zebra {
 				.pBufferInfo = &buf_info,
 			};
 			vkUpdateDescriptorSets(_vk.device(), 1, &set_write, 0, nullptr);
+
+			const size_t scene_param_size = FRAME_OVERLAP * pad_uniform_buffer_size(sizeof(GPUSceneData));
+
+
 		}
 	}
 
@@ -1193,7 +1201,7 @@ namespace zebra {
 			std::chrono::duration<float> tick_fdiff = now_tick - old_tick;
 			tick_acc += tick_fdiff.count();
 
-			if (tick_acc > dt) {
+			while (tick_acc > dt) {
 				// tick loop
 				tick_acc -= dt;
 				process_key_inputs();
@@ -1218,7 +1226,7 @@ namespace zebra {
 				ImGui::PlotLines("", frame_times.linearize(), frame_times.size(), 0, "Frame DT", 0.f, 0.1f, ImVec2(250, 100), 4);
 				ImGui::Text("Hello, world %d", 123);
 				ImGui::End();
-
+				sizeof(VulkanNative);
 				ImGui::Render();
 
 				// -- vulkan
@@ -1233,5 +1241,15 @@ namespace zebra {
 			std::this_thread::yield();
 		}
 		this->cleanup();
+	}
+
+	size_t zCore::pad_uniform_buffer_size(size_t original_size) {
+		// Calculate required alignment based on minimum device offset alignment
+		size_t min_ubo_alignment = _vk.gpu_properties.limits.minUniformBufferOffsetAlignment;
+		size_t aligned_size = original_size;
+		if (min_ubo_alignment > 0) {
+			aligned_size = (aligned_size + min_ubo_alignment - 1) & ~(min_ubo_alignment - 1);
+		}
+		return aligned_size;
 	}
 }

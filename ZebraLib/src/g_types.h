@@ -70,4 +70,12 @@ namespace zebra {
 		glm::mat4 proj;
 		glm::mat4 viewproj;
 	};
+
+	struct GPUSceneData {
+		glm::vec4 fog_color;
+		glm::vec4 fog_distances;
+		glm::vec4 ambient_color;
+		glm::vec4 sunlight_direction;
+		glm::vec4 sunlight_color;
+	};
 }

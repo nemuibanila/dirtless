@@ -38,8 +38,7 @@ namespace zebra {
 	};
 	
 	struct VulkanNative {
-		vkb::Instance vkb_instance;
-		vkb::Device vkb_device;
+
 		VkInstance& instance() {
 			return vkb_instance.instance;
 		}
@@ -60,6 +59,11 @@ namespace zebra {
 
 		VkDescriptorSetLayout global_set_layout;
 		VkDescriptorPool descriptor_pool;
+
+		VkPhysicalDeviceProperties gpu_properties;
+
+		vkb::Instance vkb_instance;
+		vkb::Device vkb_device;
 	};
 
 	struct Window {
@@ -165,6 +169,7 @@ namespace zebra {
 
 
 
+
 		// -- Input
 		// 
 		// prologue to set state
@@ -215,12 +220,16 @@ namespace zebra {
 		Mesh* get_mesh(const std::string& name);
 		AllocBuffer create_buffer(size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage);
 		void vk_immediate(std::function<void(VkCommandBuffer cmd)>&& function);
+		size_t pad_uniform_buffer_size(size_t original_size);
 
 		bool advance_frame();
 		PerFrameData& current_frame();
 
 		VkPipelineLayout _mesh_pipeline_layout;
 		VkPipeline _mesh_pipeline;
+
+		GPUSceneData scene_parameters;
+		AllocBuffer scene_parameter_buffer;
 
 		std::vector<RenderObject> _renderables;
 		std::unordered_map<std::string, Material> _materials;
