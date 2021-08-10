@@ -1226,7 +1226,6 @@ namespace zebra {
 				ImGui::PlotLines("", frame_times.linearize(), frame_times.size(), 0, "Frame DT", 0.f, 0.1f, ImVec2(250, 100), 4);
 				ImGui::Text("Hello, world %d", 123);
 				ImGui::End();
-				sizeof(VulkanNative);
 				ImGui::Render();
 
 				// -- vulkan
