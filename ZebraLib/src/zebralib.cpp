@@ -9,6 +9,7 @@
 #include <chrono>
 #include <VkBootstrap.h>
 #include <magic_enum.h>
+#include <numeric>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -68,7 +69,7 @@ namespace zebra {
 		};
 		this->key_inputs.push_back(toggle_absolute);
 
-
+		
 		KeyInput exit;
 		exit.key = Key{ GLFW_KEY_ESCAPE };
 		exit.action = InputAction::EXIT_PROGRAM;
@@ -78,7 +79,7 @@ namespace zebra {
 		next_shader.key = Key{ GLFW_KEY_N };
 		next_shader.action = InputAction::NEXT_SHADER;
 		this->key_inputs.push_back(next_shader);
-
+		
 		KeyInput forward;
 		forward.key = Key{ GLFW_KEY_W };
 		forward.condition = KeyCondition::HOLD;
@@ -90,7 +91,7 @@ namespace zebra {
 		back.condition = KeyCondition::HOLD;
 		back.action = InputAction::MOVE_BACK;
 		this->key_inputs.push_back(back);
-
+		
 		KeyInput left;
 		left.key = Key{ GLFW_KEY_A };
 		left.condition = KeyCondition::HOLD;
@@ -470,11 +471,11 @@ namespace zebra {
 
 	bool zCore::init_pipelines() {
 
-		VkShaderModule colored_triangle_frag;
-		if (!load_shader_module("../shaders/colored_triangle.frag.spv", &colored_triangle_frag)) {
-			DBG("error with colored triangle fragment shader");
+		VkShaderModule default_lit_frag;
+		if (!load_shader_module("../shaders/default_lit.frag.spv", &default_lit_frag)) {
+			DBG("error with default lit fragment shader");
 		} else {
-			DBG("colored triangle fragment shader loaded");
+			DBG("default lit fragment shader loaded");
 		}
 		VkShaderModule mesh_triangle_vertex;
 		if (!load_shader_module("../shaders/tri_mesh.vert.spv", &mesh_triangle_vertex)) {
@@ -528,7 +529,7 @@ namespace zebra {
 			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
 		);
 		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, colored_triangle_frag)
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, default_lit_frag)
 		);
 
 
@@ -543,7 +544,7 @@ namespace zebra {
 		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
 
 		//cleanup
-		vkDestroyShaderModule(_vk.device(), colored_triangle_frag, nullptr);
+		vkDestroyShaderModule(_vk.device(), default_lit_frag, nullptr);
 		vkDestroyShaderModule(_vk.device(), mesh_triangle_vertex, nullptr);
 		main_delq.push_function([=]() {
 			vkDestroyPipelineLayout(_vk.device(), _mesh_pipeline_layout, nullptr);
@@ -581,11 +582,11 @@ namespace zebra {
 		vkQueueWaitIdle(_vk.graphics_queue);
 		swapchain_delq.flush();
 		main_delq.flush();
-
+		
 		vkb::destroy_surface(_vk.vkb_instance, _window.surface);
 		vkb::destroy_device(_vk.vkb_device);
 		vkb::destroy_instance(_vk.vkb_instance);
-
+		
 		glfwDestroyWindow(_window.handle);
 		return true;
 	}
@@ -610,9 +611,10 @@ namespace zebra {
 
 	void zCore::init_descriptor_set_layouts() {
 		std::vector<VkDescriptorPoolSize> sizes = {
-			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10},
 		};
-
+		
 		VkDescriptorPoolCreateInfo pool_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,
@@ -625,21 +627,28 @@ namespace zebra {
 			vkResetDescriptorPool(_vk.device(), _vk.descriptor_pool, 0);
 			vkDestroyDescriptorPool(_vk.device(), _vk.descriptor_pool, nullptr);
 			});
+		
+		VkDescriptorSetLayoutBinding cam_buffer_binding = vki::descriptorset_layout_binding(
+			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			VK_SHADER_STAGE_VERTEX_BIT,
+			0
+		);
+		
+		VkDescriptorSetLayoutBinding scene_buffer_binding = vki::descriptorset_layout_binding(
+			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			1
+		);
 
-		VkDescriptorSetLayoutBinding cam_buffer_binding = {
-			.binding = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-		};
-
+		auto buffer_bindings = { cam_buffer_binding, scene_buffer_binding };
 		VkDescriptorSetLayoutCreateInfo set_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 			.pNext = nullptr,
-			.bindingCount = 1,
-			.pBindings = &cam_buffer_binding,
+			.flags = 0,
+			.bindingCount = (u32)buffer_bindings.size(),
+			.pBindings = buffer_bindings.begin(),
 		};
-
+		
 		vkCreateDescriptorSetLayout(_vk.device(), &set_info, nullptr, &_vk.global_set_layout);
 		main_delq.push_function([=]() {
 			vkDestroyDescriptorSetLayout(_vk.device(), _vk.global_set_layout, nullptr);
@@ -647,6 +656,14 @@ namespace zebra {
 	}
 
 	void zCore::init_descriptor_sets() {
+		const size_t sceneParamBufferSize = (FRAME_OVERLAP) * pad_uniform_buffer_size(sizeof(GPUSceneData));
+		
+		scene_parameter_buffer = create_buffer(sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		main_delq.push_function([=]() {
+			vmaDestroyBuffer(_vk.allocator, scene_parameter_buffer.buffer, scene_parameter_buffer.allocation);
+			});
+
+
 		for (auto i = 0u; i < frames.size(); i++) {
 			frames[i].camera_buffer = create_buffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			main_delq.push_function([=]() {
@@ -662,21 +679,29 @@ namespace zebra {
 			};
 
 			vkAllocateDescriptorSets(_vk.device(), &alloc_info, &frames[i].global_descriptor);
-			VkDescriptorBufferInfo buf_info = {
+			VkDescriptorBufferInfo camera_info = {
 				.buffer = frames[i].camera_buffer.buffer,
 				.offset = 0,
 				.range = sizeof(GPUCameraData),
 			};
-			VkWriteDescriptorSet set_write = {
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.pNext = nullptr,
-				.dstSet = frames[i].global_descriptor,
-				.dstBinding = 0,
-				.descriptorCount = 1,
-				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.pBufferInfo = &buf_info,
+			
+			VkDescriptorBufferInfo scene_info = {
+				.buffer = scene_parameter_buffer.buffer,
+				.offset = 0,
+				.range = sizeof(GPUSceneData),
 			};
-			vkUpdateDescriptorSets(_vk.device(), 1, &set_write, 0, nullptr);
+			VkWriteDescriptorSet camera_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				frames[i].global_descriptor, &camera_info, 0);
+			
+			VkWriteDescriptorSet scene_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+				frames[i].global_descriptor, &scene_info, 1);
+			
+			auto set_writes = {
+				camera_write,
+				scene_write,
+			};
+			
+			vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
 
 			const size_t scene_param_size = FRAME_OVERLAP * pad_uniform_buffer_size(sizeof(GPUSceneData));
 
@@ -731,7 +756,7 @@ namespace zebra {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
 			.maxSets = 1000,
-			.poolSizeCount = std::size(pool_sizes),
+			.poolSizeCount = (u32)std::size(pool_sizes),
 			.pPoolSizes = pool_sizes,
 		};
 
@@ -935,7 +960,11 @@ namespace zebra {
 	} 
 
 	PerFrameData& zCore::current_frame() {
-		return frames[frame_counter % FRAME_OVERLAP];
+		return frames[current_frame_idx()];
+	}
+
+	u32 zCore::current_frame_idx() {
+		return frame_counter % FRAME_OVERLAP;
 	}
 
 	void zCore::load_meshes() {
@@ -1043,7 +1072,7 @@ namespace zebra {
 			VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
 			VkClearValue clear_value;
 			float flash = (float)abs(sin(_df.global_current_time));
-			clear_value.color = { {0.f, 0.f, flash, 1.f} };
+			clear_value.color = { {0.2f, 0.2f, 1.f, 1.f} };
 
 			VkClearValue depth_clear;
 			depth_clear.depthStencil.depth = 1.f;
@@ -1154,6 +1183,16 @@ namespace zebra {
 			vmaUnmapMemory(_vk.allocator, current_frame().camera_buffer.allocation);
 		}
 
+		u32 scene_buffer_offset = pad_uniform_buffer_size(sizeof(scene_parameters)) * current_frame_idx();
+		scene_parameters.ambient_color = { (sin(_df.global_current_time)+1.f)/2.f,0,(cos(_df.global_current_time))+1.f/2.f,1 };
+		{ // CPUTOGPU -- scene buffer copy
+			char* data;
+			vmaMapMemory(_vk.allocator, scene_parameter_buffer.allocation, (void**)&data);
+			auto offset_ptr = data + scene_buffer_offset;
+			memcpy(offset_ptr, &scene_parameters, sizeof(scene_parameters));
+			vmaUnmapMemory(_vk.allocator, scene_parameter_buffer.allocation);
+		}
+
 		Mesh* last_mesh = nullptr;
 		Material* last_material = nullptr;
 		for (size_t i = 0; i < render_objects.size(); i++) {
@@ -1162,7 +1201,8 @@ namespace zebra {
 				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
 				last_material = object.material;
 
-				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 0, 1, &current_frame().global_descriptor, 0, nullptr);
+				auto offsets = { scene_buffer_offset };
+				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 0, 1, &current_frame().global_descriptor, (u32)offsets.size(), offsets.begin());
 			}
 			assert(last_material != nullptr);
 			MeshPushConstants constants;
@@ -1187,7 +1227,7 @@ namespace zebra {
 		auto old_tick = std::chrono::steady_clock::now();
 		auto tick_acc = 0.f;
 		auto dt = TICK_DT;
-
+		
 		boost::circular_buffer<float> frame_times(250);
 		
 
@@ -1223,11 +1263,15 @@ namespace zebra {
 				ImGui_ImplGlfw_NewFrame();
 				ImGui::NewFrame();
 				ImGui::Begin("My first tool", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-				ImGui::PlotLines("", frame_times.linearize(), frame_times.size(), 0, "Frame DT", 0.f, 0.1f, ImVec2(250, 100), 4);
-				ImGui::Text("Hello, world %d", 123);
+				ImGui::PlotLines("", frame_times.linearize(), (i32)frame_times.size(), 0, "Frame DT", 0.f, 0.1f, ImVec2(250, 100), 4);
+				auto avg_ft = std::accumulate(frame_times.begin(), frame_times.end(), 0.f)/frame_times.size();
+				
+				ImGui::Text("_gt %f", (float)_df.global_current_time);
+				ImGui::Text("_frameidx %u", current_frame_idx());
+				ImGui::Text("avg frametime %f", avg_ft);
 				ImGui::End();
 				ImGui::Render();
-
+				
 				// -- vulkan
 				draw();
 

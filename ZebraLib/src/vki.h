@@ -175,7 +175,7 @@ namespace vki {
 		};
 	}
 
-	constexpr VkDescriptorSetLayoutBinding vki::descriptorset_layout_binding(VkDescriptorType type, VkShaderStageFlags stageFlags, u32 binding)
+	constexpr VkDescriptorSetLayoutBinding descriptorset_layout_binding(VkDescriptorType type, VkShaderStageFlags stageFlags, u32 binding)
 	{
 		VkDescriptorSetLayoutBinding setbind = {};
 		setbind.binding = binding;
@@ -187,7 +187,7 @@ namespace vki {
 		return setbind;
 	}
 
-	VkWriteDescriptorSet vki::write_descriptor_buffer(VkDescriptorType type, VkDescriptorSet dstSet, VkDescriptorBufferInfo* bufferInfo , u32 binding)
+	constexpr VkWriteDescriptorSet write_descriptor_buffer(VkDescriptorType type, VkDescriptorSet dstSet, VkDescriptorBufferInfo* bufferInfo , u32 binding)
 	{
 		VkWriteDescriptorSet write = {};
 		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

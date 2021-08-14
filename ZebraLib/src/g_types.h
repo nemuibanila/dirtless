@@ -43,7 +43,7 @@ namespace zebra {
 			positionAttribute.location = 0;
 			positionAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
 			positionAttribute.offset = offsetof(P3N3C3, pos);
-
+			
 			//Normal will be stored at Location 1
 			VkVertexInputAttributeDescription normalAttribute = {};
 			normalAttribute.binding = 0;
@@ -62,7 +62,7 @@ namespace zebra {
 			description.attributes.push_back(normalAttribute);
 			description.attributes.push_back(colorAttribute);
 			return description;
-		};
+		}
 	};
 
 	struct GPUCameraData {

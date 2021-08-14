@@ -5,21 +5,21 @@ cmake_minimum_required (VERSION 3.8)
 
 # Add source to this project's executable.
 add_executable (zebralib
-	main.cc 
-	vki.cc
-	vki.h
-	zebralib.h
-	zebralib.cc
-	zebratypes.h
+	"main.cpp" 
+	"vki.cpp"
+	"vki.h"
+	"zebralib.h"
+	"zebralib.cpp"
+	"zebratypes.h"
  "g_pipeline.h"
- "g_pipeline.cc" 
+ "g_pipeline.cpp" 
  "g_types.h" 
  "g_mesh.h"
- "g_mesh.cc" 
+ "g_mesh.cpp" 
  "g_camera.h"
- "g_camera.cc"  "g_vec.h" "z_debug.h")
+ "g_camera.cpp"  "g_vec.h" "z_debug.h")
 
-set_property(TARGET zebralib PROPERTY VS_DEBUFGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:zebralib")
+set_property(TARGET zebralib PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:zebralib")
 
 target_include_directories(zebralib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(zebralib vkbootstrap vma glm tinyobjloader imgui stb_image magic_enum boost_headers)

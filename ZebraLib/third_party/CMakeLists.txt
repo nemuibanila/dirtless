@@ -14,7 +14,7 @@ add_library(tinyobjloader STATIC)
 target_sources(vkbootstrap PRIVATE 
     vkbootstrap/VkBootstrap.h
     vkbootstrap/VkBootstrap.cpp
-     "vkbootstrap/VkBootstrapDispatch.h")
+    vkbootstrap/VkBootstrapDispatch.h)
 
 target_include_directories(vkbootstrap PUBLIC vkbootstrap)
 target_link_libraries(vkbootstrap PUBLIC Vulkan::Vulkan $<$<BOOL:UNIX>:${CMAKE_DL_LIBS}>)
@@ -23,7 +23,7 @@ target_link_libraries(vkbootstrap PUBLIC Vulkan::Vulkan $<$<BOOL:UNIX>:${CMAKE_D
 target_include_directories(vma INTERFACE vma)
 target_include_directories(glm INTERFACE glm)
 target_include_directories(magic_enum INTERFACE magic_enum)
-target_include_directories(boost_headers INTERFACE E:\\Gamedev\\Deps\\boost_1_76_0)
+target_include_directories(boost_headers INTERFACE "E:\\Gamedev\\Deps\\boost_1_76_0")
 
 add_subdirectory("glfw")
 

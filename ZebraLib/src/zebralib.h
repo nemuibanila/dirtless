@@ -224,6 +224,7 @@ namespace zebra {
 
 		bool advance_frame();
 		PerFrameData& current_frame();
+		u32 current_frame_idx();
 
 		VkPipelineLayout _mesh_pipeline_layout;
 		VkPipeline _mesh_pipeline;
