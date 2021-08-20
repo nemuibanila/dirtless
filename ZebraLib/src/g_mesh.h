@@ -26,4 +26,8 @@ namespace zebra {
 		Material* material;
 		glm::mat4 transform;
 	};
+
+	struct GPUObjectData {
+		glm::mat4 model_matrix;
+	};
 }

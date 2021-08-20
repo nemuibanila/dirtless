@@ -145,7 +145,7 @@ namespace zebra {
 		if (!this->init_swapchain()) return false;
 
 		DBG("per frame data");
-		if (!this->init_per_frame_data()) return false;
+		if (!this->init_swapchain_per_frame_data()) return false;
 		init_upload_context();
 
 		DBG("render pass");
@@ -156,7 +156,8 @@ namespace zebra {
 
 		DBG("pipelines/shaders");
 		init_descriptor_set_layouts();
-		init_descriptor_sets();
+
+		init_per_frame_data();
 		if (!this->init_pipelines()) return false;
 
 
@@ -176,8 +177,25 @@ namespace zebra {
 		};
 		return true;
 	}
-
+	const int MAX_OBJECTS = 50000;
 	bool zCore::init_per_frame_data() {
+		for (auto i = 0u; i < FRAME_OVERLAP; i++) {
+
+			// grow dynamically eventually
+
+			frames[i].object_buffer = create_buffer(sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			main_delq.push_function([=]() {
+				vmaDestroyBuffer(_vk.allocator, frames[i].object_buffer.buffer, frames[i].object_buffer.allocation);
+				});
+		}
+
+
+
+		init_descriptor_sets();
+		return true;
+	}
+
+	bool zCore::init_swapchain_per_frame_data() {
 		VkFenceCreateInfo fence_info = {
 			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 			.pNext = nullptr,
@@ -385,7 +403,7 @@ namespace zebra {
 		if (!this->init_swapchain()) return false;
 
 		DBG("per frame data");
-		if (!this->init_per_frame_data()) return false;
+		if (!this->init_swapchain_per_frame_data()) return false;
 
 		DBG("render pass");
 		if (!this->init_default_renderpass()) return false;
@@ -520,8 +538,9 @@ namespace zebra {
 		mesh_pipeline_layout_info.pushConstantRangeCount = 1;
 		mesh_pipeline_layout_info.pPushConstantRanges = &push_constant;
 
-		mesh_pipeline_layout_info.setLayoutCount = 1;
-		mesh_pipeline_layout_info.pSetLayouts = &_vk.global_set_layout;
+		auto set_layouts = { _vk.global_set_layout, _vk.object_set_layout };
+		mesh_pipeline_layout_info.setLayoutCount = (u32)set_layouts.size();
+		mesh_pipeline_layout_info.pSetLayouts = set_layouts.begin();
 
 		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &mesh_pipeline_layout_info, nullptr, &_mesh_pipeline_layout));
 
@@ -613,6 +632,7 @@ namespace zebra {
 		std::vector<VkDescriptorPoolSize> sizes = {
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10},
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
 		};
 		
 		VkDescriptorPoolCreateInfo pool_info = {
@@ -628,6 +648,8 @@ namespace zebra {
 			vkDestroyDescriptorPool(_vk.device(), _vk.descriptor_pool, nullptr);
 			});
 		
+
+		// global descriptor set layout
 		VkDescriptorSetLayoutBinding cam_buffer_binding = vki::descriptorset_layout_binding(
 			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 			VK_SHADER_STAGE_VERTEX_BIT,
@@ -650,8 +672,25 @@ namespace zebra {
 		};
 		
 		vkCreateDescriptorSetLayout(_vk.device(), &set_info, nullptr, &_vk.global_set_layout);
+
+
+		// object set layout
+		auto object_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
+		auto object_bindings = { object_bind };
+		VkDescriptorSetLayoutCreateInfo set_2_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+			.bindingCount = (u32)object_bindings.size(),
+			.pBindings = object_bindings.begin(),
+		};
+
+		vkCreateDescriptorSetLayout(_vk.device(), &set_2_info, nullptr, &_vk.object_set_layout);
+
+
 		main_delq.push_function([=]() {
 			vkDestroyDescriptorSetLayout(_vk.device(), _vk.global_set_layout, nullptr);
+			vkDestroyDescriptorSetLayout(_vk.device(), _vk.object_set_layout, nullptr);
 			});
 	}
 
@@ -679,6 +718,16 @@ namespace zebra {
 			};
 
 			vkAllocateDescriptorSets(_vk.device(), &alloc_info, &frames[i].global_descriptor);
+
+			VkDescriptorSetAllocateInfo object_alloc_info = {
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.pNext = nullptr,
+				.descriptorPool = _vk.descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &_vk.object_set_layout,
+			};
+			vkAllocateDescriptorSets(_vk.device(), &object_alloc_info, &frames[i].object_descriptor);
+
 			VkDescriptorBufferInfo camera_info = {
 				.buffer = frames[i].camera_buffer.buffer,
 				.offset = 0,
@@ -690,15 +739,26 @@ namespace zebra {
 				.offset = 0,
 				.range = sizeof(GPUSceneData),
 			};
+			
+			VkDescriptorBufferInfo object_info = {
+				.buffer = frames[i].object_buffer.buffer,
+				.offset = 0,
+				.range = sizeof(GPUObjectData) * MAX_OBJECTS,
+			};
+			
 			VkWriteDescriptorSet camera_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 				frames[i].global_descriptor, &camera_info, 0);
 			
 			VkWriteDescriptorSet scene_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
 				frames[i].global_descriptor, &scene_info, 1);
 			
+			VkWriteDescriptorSet object_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				frames[i].object_descriptor, &object_info, 0);
+			
 			auto set_writes = {
 				camera_write,
 				scene_write,
+				object_write,
 			};
 			
 			vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
@@ -1193,6 +1253,16 @@ namespace zebra {
 			vmaUnmapMemory(_vk.allocator, scene_parameter_buffer.allocation);
 		}
 
+		
+		void* object_data; // CPUTOGPU object buffer copy 
+		vmaMapMemory(_vk.allocator, current_frame().object_buffer.allocation, &object_data);
+		GPUObjectData* objectSSBO = (GPUObjectData*)object_data;
+		for (size_t i = 0; i < render_objects.size(); i++) {
+			RenderObject& object = render_objects.data()[i];
+			objectSSBO[i].model_matrix = object.transform;
+		}
+		vmaUnmapMemory(_vk.allocator, current_frame().object_buffer.allocation);
+
 		Mesh* last_mesh = nullptr;
 		Material* last_material = nullptr;
 		for (size_t i = 0; i < render_objects.size(); i++) {
@@ -1203,11 +1273,14 @@ namespace zebra {
 
 				auto offsets = { scene_buffer_offset };
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 0, 1, &current_frame().global_descriptor, (u32)offsets.size(), offsets.begin());
+			
+				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 1, 1, &current_frame().object_descriptor, 0, nullptr);
 			}
 			assert(last_material != nullptr);
-			MeshPushConstants constants;
-			constants.render_matrix = object.transform;
-			vkCmdPushConstants(cmd, object.material->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(constants), &constants);
+
+			//MeshPushConstants constants;
+			//constants.render_matrix = object.transform;
+			//vkCmdPushConstants(cmd, object.material->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(constants), &constants);
 
 			if (object.mesh != last_mesh) {
 				VkDeviceSize offset = 0;
@@ -1216,7 +1289,7 @@ namespace zebra {
 			}
 			assert(last_mesh != nullptr);
 
-			vkCmdDraw(cmd, (u32)object.mesh->_vertices.size(), 1, 0, 0);
+			vkCmdDraw(cmd, (u32)object.mesh->_vertices.size(), 1, 0, i);
 		}
 
 	}

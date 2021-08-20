@@ -22,14 +22,18 @@
 namespace zebra { 
 
 	struct PerFrameData {
+		// depends on swapchain
 		VkSemaphore presentS, renderS;
 		VkFence renderF;
 
 		VkCommandPool pool;
 		VkCommandBuffer buf;
 
+		// independent of swapchain
 		AllocBuffer camera_buffer;
+		AllocBuffer object_buffer;
 		VkDescriptorSet global_descriptor;
+		VkDescriptorSet object_descriptor;
 	};
 
 	struct UploadContext {
@@ -58,6 +62,7 @@ namespace zebra {
 		VkFormat depth_format;
 
 		VkDescriptorSetLayout global_set_layout;
+		VkDescriptorSetLayout object_set_layout;
 		VkDescriptorPool descriptor_pool;
 
 		VkPhysicalDeviceProperties gpu_properties;
@@ -191,6 +196,7 @@ namespace zebra {
 		bool init_vulkan();
 		bool init_gfx();
 		bool init_default_renderpass();
+		bool init_swapchain_per_frame_data();
 		bool init_per_frame_data();
 		bool init_swapchain();
 		bool init_framebuffers();
