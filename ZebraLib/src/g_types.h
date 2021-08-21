@@ -77,5 +77,8 @@ namespace zebra {
 		glm::vec4 ambient_color;
 		glm::vec4 sunlight_direction;
 		glm::vec4 sunlight_color;
+		GPUCameraData camera;
 	};
+
+	
 }

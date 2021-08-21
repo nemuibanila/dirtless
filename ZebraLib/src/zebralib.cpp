@@ -177,7 +177,7 @@ namespace zebra {
 		};
 		return true;
 	}
-	const int MAX_OBJECTS = 50000;
+	const int MAX_OBJECTS = 64000;
 	bool zCore::init_per_frame_data() {
 		for (auto i = 0u; i < FRAME_OVERLAP; i++) {
 
@@ -428,7 +428,7 @@ namespace zebra {
 		vkb::InstanceBuilder builder;
 		builder
 			.set_app_name("Zebra")
-			.request_validation_layers()
+			//.request_validation_layers()
 			.use_default_debug_messenger();
 
 		for (u32 i = 0; i < ext_count; i++) {
@@ -648,21 +648,13 @@ namespace zebra {
 			vkDestroyDescriptorPool(_vk.device(), _vk.descriptor_pool, nullptr);
 			});
 		
-
-		// global descriptor set layout
-		VkDescriptorSetLayoutBinding cam_buffer_binding = vki::descriptorset_layout_binding(
-			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			VK_SHADER_STAGE_VERTEX_BIT,
-			0
-		);
-		
 		VkDescriptorSetLayoutBinding scene_buffer_binding = vki::descriptorset_layout_binding(
 			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-			1
+			0
 		);
 
-		auto buffer_bindings = { cam_buffer_binding, scene_buffer_binding };
+		auto buffer_bindings = { scene_buffer_binding };
 		VkDescriptorSetLayoutCreateInfo set_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 			.pNext = nullptr,
@@ -727,12 +719,6 @@ namespace zebra {
 				.pSetLayouts = &_vk.object_set_layout,
 			};
 			vkAllocateDescriptorSets(_vk.device(), &object_alloc_info, &frames[i].object_descriptor);
-
-			VkDescriptorBufferInfo camera_info = {
-				.buffer = frames[i].camera_buffer.buffer,
-				.offset = 0,
-				.range = sizeof(GPUCameraData),
-			};
 			
 			VkDescriptorBufferInfo scene_info = {
 				.buffer = scene_parameter_buffer.buffer,
@@ -746,17 +732,13 @@ namespace zebra {
 				.range = sizeof(GPUObjectData) * MAX_OBJECTS,
 			};
 			
-			VkWriteDescriptorSet camera_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				frames[i].global_descriptor, &camera_info, 0);
-			
 			VkWriteDescriptorSet scene_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-				frames[i].global_descriptor, &scene_info, 1);
+				frames[i].global_descriptor, &scene_info, 0);
 			
 			VkWriteDescriptorSet object_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				frames[i].object_descriptor, &object_info, 0);
 			
 			auto set_writes = {
-				camera_write,
 				scene_write,
 				object_write,
 			};
@@ -1236,15 +1218,9 @@ namespace zebra {
 			.viewproj = projection * view,
 		};
 
-		{ // CPUTOGPU -- camera buffer copy
-			void* data;
-			vmaMapMemory(_vk.allocator, current_frame().camera_buffer.allocation, &data);
-			memcpy(data, &camera_data, sizeof(camera_data));
-			vmaUnmapMemory(_vk.allocator, current_frame().camera_buffer.allocation);
-		}
-
 		u32 scene_buffer_offset = pad_uniform_buffer_size(sizeof(scene_parameters)) * current_frame_idx();
 		scene_parameters.ambient_color = { (sin(_df.global_current_time)+1.f)/2.f,0,(cos(_df.global_current_time))+1.f/2.f,1 };
+		scene_parameters.camera = camera_data;
 		{ // CPUTOGPU -- scene buffer copy
 			char* data;
 			vmaMapMemory(_vk.allocator, scene_parameter_buffer.allocation, (void**)&data);

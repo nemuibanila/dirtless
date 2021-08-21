@@ -17,7 +17,7 @@ namespace zebra {
 		glm::quat _ry = glm::quat(1.f, 0.f, 0.f, 0.f);
 		glm::quat base_rotation = glm::quat(glm::vec3(0.f, glm::pi<float>(), 0.f));
 		float movement_smoothing = 4.f;
-		float camera_smoothing = 1.2f;
+		float camera_smoothing = 1.8f;
 		float _rx_acc = 0.f;
 		float _ry_acc = 0.f;
 
