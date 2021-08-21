@@ -32,6 +32,7 @@ namespace zebra {
 		// independent of swapchain
 		AllocBuffer camera_buffer;
 		AllocBuffer object_buffer;
+		AllocBuffer makeup_buffer;
 		VkDescriptorSet global_descriptor;
 		VkDescriptorSet object_descriptor;
 	};

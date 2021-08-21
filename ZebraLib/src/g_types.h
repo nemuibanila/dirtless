@@ -80,5 +80,9 @@ namespace zebra {
 		GPUCameraData camera;
 	};
 
+	struct GPUMakeupData {
+		glm::vec4 color;
+	};
+
 	
 }

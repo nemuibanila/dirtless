@@ -14,6 +14,10 @@ namespace zebra {
 		glm::mat4 render_matrix;
 	};
 
+	struct Makeup {
+		glm::vec4 color;
+	};
+
 	struct Mesh {
 		std::vector<P3N3C3> _vertices;
 		AllocBuffer _vertex_buffer;
@@ -24,6 +28,7 @@ namespace zebra {
 	struct RenderObject {
 		Mesh* mesh;
 		Material* material;
+		Makeup makeup;
 		glm::mat4 transform;
 	};
 

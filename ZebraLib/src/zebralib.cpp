@@ -7,6 +7,7 @@
 #include <vk_mem_alloc.h>
 #include <thread>
 #include <chrono>
+#include <random>
 #include <VkBootstrap.h>
 #include <magic_enum.h>
 #include <numeric>
@@ -184,6 +185,8 @@ namespace zebra {
 			// grow dynamically eventually
 
 			frames[i].object_buffer = create_buffer(sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			frames[i].makeup_buffer = create_buffer(sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
 			main_delq.push_function([=]() {
 				vmaDestroyBuffer(_vk.allocator, frames[i].object_buffer.buffer, frames[i].object_buffer.allocation);
 				});
@@ -428,7 +431,7 @@ namespace zebra {
 		vkb::InstanceBuilder builder;
 		builder
 			.set_app_name("Zebra")
-			//.request_validation_layers()
+			.request_validation_layers()
 			.use_default_debug_messenger();
 
 		for (u32 i = 0; i < ext_count; i++) {
@@ -579,6 +582,11 @@ namespace zebra {
 		monkey.mesh = get_mesh("monkey");
 		monkey.material = get_material("defaultmesh");
 		monkey.transform = glm::mat4{ 1.0f };
+		monkey.makeup.color = glm::vec4(1.f);
+
+		std::random_device r;
+		std::default_random_engine e1(r());
+		std::uniform_real_distribution<float> frandom(0, 1);
 
 		_renderables.push_back(monkey);
 		for (int x = -20; x <= 20; x++) {
@@ -590,11 +598,30 @@ namespace zebra {
 					glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x, z, y));
 					glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
 					tri.transform = translation * scale;
+					float hue = frandom(e1) * 6;
+					float x = (1.f - glm::abs(glm::mod(hue, 2.f)) - 1.f);
+					glm::vec3 color{};
+					if (hue > 5.f) {
+						color = glm::vec3(1, 0, x);
+					} else if (hue > 4.f) {
+						color = glm::vec3(x, 0, 1);
+					} else if (hue > 3.f) {
+						color = glm::vec3(0, x, 1);
+					} else if (hue > 2.f) {
+						color = glm::vec3(0, 1, x);
+					} else if (hue > 1.f) {
+						color = glm::vec3(x, 1, 0);
+					} else {
+						color = glm::vec3(1, x, 0);
+					}
+					tri.makeup.color = glm::vec4(color, 1.f);
 
 					_renderables.push_back(tri);
 				}
 			}
 		}
+
+
 	}
 
 	bool zCore::cleanup() {
@@ -668,7 +695,8 @@ namespace zebra {
 
 		// object set layout
 		auto object_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
-		auto object_bindings = { object_bind };
+		auto object2_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1);
+		auto object_bindings = { object_bind, object2_bind };
 		VkDescriptorSetLayoutCreateInfo set_2_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 			.pNext = nullptr,
@@ -731,6 +759,12 @@ namespace zebra {
 				.offset = 0,
 				.range = sizeof(GPUObjectData) * MAX_OBJECTS,
 			};
+
+			VkDescriptorBufferInfo makeup_info = {
+				.buffer = frames[i].makeup_buffer.buffer,
+				.offset = 0,
+				.range = sizeof(GPUMakeupData) * MAX_OBJECTS,
+			};
 			
 			VkWriteDescriptorSet scene_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
 				frames[i].global_descriptor, &scene_info, 0);
@@ -738,9 +772,13 @@ namespace zebra {
 			VkWriteDescriptorSet object_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				frames[i].object_descriptor, &object_info, 0);
 			
+			VkWriteDescriptorSet makeup_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				frames[i].object_descriptor, &makeup_info, 1);
+
 			auto set_writes = {
 				scene_write,
 				object_write,
+				makeup_write,
 			};
 			
 			vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
@@ -1239,6 +1277,15 @@ namespace zebra {
 		}
 		vmaUnmapMemory(_vk.allocator, current_frame().object_buffer.allocation);
 
+		void* makeup_data; // CPUTOGPU makeup buffer copy 
+		vmaMapMemory(_vk.allocator, current_frame().makeup_buffer.allocation, &makeup_data);
+		GPUMakeupData* makeupSSBO = (GPUMakeupData*)makeup_data;
+		for (size_t i = 0; i < render_objects.size(); i++) {
+			RenderObject& object = render_objects[i];
+			makeupSSBO[i].color = object.makeup.color;
+		}
+		vmaUnmapMemory(_vk.allocator, current_frame().makeup_buffer.allocation);
+
 		Mesh* last_mesh = nullptr;
 		Material* last_material = nullptr;
 		for (size_t i = 0; i < render_objects.size(); i++) {
@@ -1264,7 +1311,7 @@ namespace zebra {
 				last_mesh = object.mesh;
 			}
 			assert(last_mesh != nullptr);
-
+			assert(object.mesh != nullptr);
 			vkCmdDraw(cmd, (u32)object.mesh->_vertices.size(), 1, 0, i);
 		}
 
