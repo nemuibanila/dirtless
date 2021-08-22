@@ -188,6 +188,7 @@ namespace zebra {
 			frames[i].makeup_buffer = create_buffer(sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 			main_delq.push_function([=]() {
+				vmaDestroyBuffer(_vk.allocator, frames[i].makeup_buffer.buffer, frames[i].makeup_buffer.allocation);
 				vmaDestroyBuffer(_vk.allocator, frames[i].object_buffer.buffer, frames[i].object_buffer.allocation);
 				});
 		}
@@ -747,7 +748,8 @@ namespace zebra {
 				.pSetLayouts = &_vk.object_set_layout,
 			};
 			vkAllocateDescriptorSets(_vk.device(), &object_alloc_info, &frames[i].object_descriptor);
-			
+
+			// this is what actually sets up the link between descriptors (shader variables) and the buffers
 			VkDescriptorBufferInfo scene_info = {
 				.buffer = scene_parameter_buffer.buffer,
 				.offset = 0,
@@ -782,10 +784,7 @@ namespace zebra {
 			};
 			
 			vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
-
-			const size_t scene_param_size = FRAME_OVERLAP * pad_uniform_buffer_size(sizeof(GPUSceneData));
-
-
+			// -----------------------
 		}
 	}
 
