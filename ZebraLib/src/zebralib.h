@@ -38,8 +38,11 @@ namespace zebra {
 	};
 
 	struct UploadContext {
+		VmaAllocator allocator;
+		VkDevice device;
 		VkFence uploadF;
 		VkCommandPool pool;
+		VkQueue graphics_queue;
 	};
 	
 	struct VulkanNative {
@@ -158,23 +161,12 @@ namespace zebra {
 	constexpr u32 FRAME_OVERLAP = 2u;
 	constexpr float TICK_DT = 1.f / 100.f;
 
+	AllocBuffer create_buffer(VmaAllocator& allocator, size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage);
+	void vk_immediate(UploadContext& up, std::function<void(VkCommandBuffer cmd)>&& function);
+
+
 	class zCore {
 	protected:
-		// -- cleanup
-		DeletionQueue main_delq;
-		DeletionQueue swapchain_delq;
-		bool die = false;
-
-		// -- rendering
-		VulkanNative _vk;
-		UploadContext _up;
-		DrawFrameInfo _df;
-		Window _window;
-		std::array<PerFrameData, FRAME_OVERLAP> frames;
-		size_t frame_counter = 0;
-
-
-
 
 		// -- Input
 		// 
@@ -219,14 +211,27 @@ namespace zebra {
 
 
 	public:
+		// -- cleanup
+		DeletionQueue main_delq;
+		DeletionQueue swapchain_delq;
+		bool die = false;
+
+		// -- rendering
+		VulkanNative _vk;
+		UploadContext _up;
+		DrawFrameInfo _df;
+		Window _window;
+		std::array<PerFrameData, FRAME_OVERLAP> frames;
+		size_t frame_counter = 0;
+
+
 		// -- rendering
 		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
 		void upload_mesh(Mesh& mesh);
 		Material* create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name);
 		Material* get_material(const std::string& name);
 		Mesh* get_mesh(const std::string& name);
-		AllocBuffer create_buffer(size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage);
-		void vk_immediate(std::function<void(VkCommandBuffer cmd)>&& function);
+
 		size_t pad_uniform_buffer_size(size_t original_size);
 
 		bool advance_frame();

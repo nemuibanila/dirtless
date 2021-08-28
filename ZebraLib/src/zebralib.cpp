@@ -178,14 +178,14 @@ namespace zebra {
 		};
 		return true;
 	}
-	const int MAX_OBJECTS = 64000;
+	const int MAX_OBJECTS = 640000;
 	bool zCore::init_per_frame_data() {
 		for (auto i = 0u; i < FRAME_OVERLAP; i++) {
 
 			// grow dynamically eventually
 
-			frames[i].object_buffer = create_buffer(sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-			frames[i].makeup_buffer = create_buffer(sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			frames[i].object_buffer = create_buffer(_vk.allocator, sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			frames[i].makeup_buffer = create_buffer(_vk.allocator, sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 			main_delq.push_function([=]() {
 				vmaDestroyBuffer(_vk.allocator, frames[i].makeup_buffer.buffer, frames[i].makeup_buffer.allocation);
@@ -432,7 +432,7 @@ namespace zebra {
 		vkb::InstanceBuilder builder;
 		builder
 			.set_app_name("Zebra")
-			.request_validation_layers()
+			//.request_validation_layers()
 			.use_default_debug_messenger();
 
 		for (u32 i = 0; i < ext_count; i++) {
@@ -590,13 +590,17 @@ namespace zebra {
 		std::uniform_real_distribution<float> frandom(0, 1);
 
 		_renderables.push_back(monkey);
-		for (int x = -20; x <= 20; x++) {
-			for (int y = -20; y <= 20; y++) {
-				for (int z = -4; z <= 4; z++) {
+		for (int x = -30; x <= 30; x++) {
+			for (int y = -30; y <= 30; y++) {
+				for (int z = -30; z <= 30; z++) {
 					RenderObject tri;
 					tri.mesh = get_mesh("triangle");
 					tri.material = get_material("defaultmesh");
-					glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x, z, y));
+
+					float ox = frandom(e1) * 0.5f - 0.25f;
+					float oy = frandom(e1) * 0.5f - 0.25f;
+					float oz = frandom(e1) * 0.5f - 0.25f;
+					glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x + ox, z + oz, y + oy));
 					glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
 					tri.transform = translation * scale;
 					float hue = frandom(e1) * 6;
@@ -648,7 +652,10 @@ namespace zebra {
 		auto command_pool_info = vki::command_pool_create_info(
 			_vk.vkb_device.get_queue_index(vkb::QueueType::graphics).value());
 		vkCreateCommandPool(_vk.device(), &command_pool_info, nullptr, &_up.pool);
-		
+		_up.allocator = _vk.allocator;
+		_up.device = _vk.device();
+		_up.graphics_queue = _vk.graphics_queue;
+
 		main_delq.push_function([=]() {
 			vkDestroyFence(_vk.device(), _up.uploadF, nullptr);
 			vkDestroyCommandPool(_vk.device(), _up.pool, nullptr);
@@ -718,14 +725,14 @@ namespace zebra {
 	void zCore::init_descriptor_sets() {
 		const size_t sceneParamBufferSize = (FRAME_OVERLAP) * pad_uniform_buffer_size(sizeof(GPUSceneData));
 		
-		scene_parameter_buffer = create_buffer(sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		scene_parameter_buffer = create_buffer(_vk.allocator, sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		main_delq.push_function([=]() {
 			vmaDestroyBuffer(_vk.allocator, scene_parameter_buffer.buffer, scene_parameter_buffer.allocation);
 			});
 
 
 		for (auto i = 0u; i < frames.size(); i++) {
-			frames[i].camera_buffer = create_buffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			frames[i].camera_buffer = create_buffer(_vk.allocator, sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			main_delq.push_function([=]() {
 				vmaDestroyBuffer(_vk.allocator, frames[i].camera_buffer.buffer, frames[i].camera_buffer.allocation);
 				});
@@ -788,11 +795,11 @@ namespace zebra {
 		}
 	}
 
-	void zCore::vk_immediate(std::function<void(VkCommandBuffer cmd)>&& function) {
+	void vk_immediate(UploadContext& up, std::function<void(VkCommandBuffer cmd)>&& function) {
 		// update for seperate context
-		VkCommandBufferAllocateInfo cmd_alloc_info = vki::command_buffer_allocate_info(_up.pool);
+		VkCommandBufferAllocateInfo cmd_alloc_info = vki::command_buffer_allocate_info(up.pool);
 		VkCommandBuffer cmd;
-		vkAllocateCommandBuffers(_vk.device(), &cmd_alloc_info, &cmd);
+		vkAllocateCommandBuffers(up.allocator->m_hDevice, &cmd_alloc_info, &cmd);
 		auto begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 		vkBeginCommandBuffer(cmd, &begin_info);
 		function(cmd);
@@ -809,11 +816,11 @@ namespace zebra {
 			.pSignalSemaphores = nullptr,
 		};
 
-		vkQueueSubmit(_vk.graphics_queue, 1, &submit, _up.uploadF);
-		vkWaitForFences(_vk.device(), 1, &_up.uploadF, true, 999'999'999'999);
-		vkResetFences(_vk.device(), 1, &_up.uploadF);
+		vkQueueSubmit(up.graphics_queue, 1, &submit, up.uploadF);
+		vkWaitForFences(up.device, 1, &up.uploadF, true, 999'999'999'999);
+		vkResetFences(up.device, 1, &up.uploadF);
 
-		vkResetCommandPool(_vk.device(), _up.pool, 0);
+		vkResetCommandPool(up.device, up.pool, 0);
 	}
 
 	void zCore::init_imgui() {
@@ -859,7 +866,7 @@ namespace zebra {
 		};
 
 		ImGui_ImplVulkan_Init(&init_info, _vk.renderpass);
-		vk_immediate([=](VkCommandBuffer cmd) {
+		vk_immediate(_up, [=](VkCommandBuffer cmd) {
 			ImGui_ImplVulkan_CreateFontsTexture(cmd);
 			});
 
@@ -1068,26 +1075,60 @@ namespace zebra {
 	}
 
 	void zCore::upload_mesh(Mesh& mesh) {
-		VkBufferCreateInfo buffer_info = {
+		const size_t buffer_size = mesh._vertices.size() * sizeof(mesh._vertices[0]);
+
+		VkBufferCreateInfo staging_info = {
 			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-			.size = mesh._vertices.size() * sizeof(mesh._vertices[0]),
-			.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			.pNext = nullptr,
+			.size = (u32)buffer_size,
+			.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		};
 
-		VmaAllocationCreateInfo vma_alloc_info = {
-			.usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+		VmaAllocationCreateInfo staging_alloc_info = {
+			.usage = VMA_MEMORY_USAGE_CPU_ONLY,
 		};
 
-		VK_CHECK(vmaCreateBuffer(_vk.allocator, &buffer_info, &vma_alloc_info, &mesh._vertex_buffer.buffer, &mesh._vertex_buffer.allocation, nullptr));
+		AllocBuffer staging_buffer;
+		VK_CHECK(vmaCreateBuffer(_vk.allocator, &staging_info, &staging_alloc_info, &staging_buffer.buffer, &staging_buffer.allocation, nullptr));
+		
+		void* data;
+		vmaMapMemory(_vk.allocator, staging_buffer.allocation, &data);
+		memcpy(data, mesh._vertices.data(), buffer_size);
+		vmaUnmapMemory(_vk.allocator, staging_buffer.allocation);
+
+		if (_vk.allocator->IsIntegratedGpu()) {
+			// we dont need to copy, as cpu and gpu visible memory are usually the same
+			mesh._vertex_buffer = staging_buffer;
+		} else {
+			// need to copy from cpu to gpu
+			VkBufferCreateInfo buffer_info = {
+				.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+				.size = (u32)buffer_size,
+				.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			};
+
+			VmaAllocationCreateInfo vma_alloc_info = {
+				.usage = VMA_MEMORY_USAGE_GPU_ONLY,
+			};
+
+			VK_CHECK(vmaCreateBuffer(_vk.allocator, &buffer_info, &vma_alloc_info, &mesh._vertex_buffer.buffer, &mesh._vertex_buffer.allocation, nullptr));
+
+			// copy from staging to vertex
+			vk_immediate(_up, [=](VkCommandBuffer cmd) {
+				VkBufferCopy copy;
+				copy.dstOffset = 0;
+				copy.srcOffset = 0;
+				copy.size = buffer_size;
+				vkCmdCopyBuffer(cmd, staging_buffer.buffer, mesh._vertex_buffer.buffer, 1, &copy);
+				});
+
+			vmaDestroyBuffer(_vk.allocator, staging_buffer.buffer, staging_buffer.allocation);
+		}
 
 		main_delq.push_function([=]() {
 			vmaDestroyBuffer(_vk.allocator, mesh._vertex_buffer.buffer, mesh._vertex_buffer.allocation);
 			});
 
-		void* data;
-		vmaMapMemory(_vk.allocator, mesh._vertex_buffer.allocation, &data);
-		memcpy(data, mesh._vertices.data(), mesh._vertices.size() * sizeof(mesh._vertices[0]));
-		vmaUnmapMemory(_vk.allocator, mesh._vertex_buffer.allocation);
 	}
 
 	Material* zCore::create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name) {
@@ -1111,7 +1152,7 @@ namespace zebra {
 		else return &(*it).second;
 	}
 
-	AllocBuffer zCore::create_buffer(size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage) {
+	AllocBuffer create_buffer(VmaAllocator& allocator, size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage) {
 		VkBufferCreateInfo buffer_info = {
 			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 			.pNext = nullptr,
@@ -1124,7 +1165,7 @@ namespace zebra {
 		};
 
 		AllocBuffer buf{};
-		VK_CHECK(vmaCreateBuffer(_vk.allocator, &buffer_info, &vma_info, &buf.buffer, &buf.allocation, nullptr));
+		VK_CHECK(vmaCreateBuffer(allocator, &buffer_info, &vma_info, &buf.buffer, &buf.allocation, nullptr));
 		return buf;
 	}
 
