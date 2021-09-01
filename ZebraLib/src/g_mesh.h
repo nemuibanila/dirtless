@@ -19,7 +19,7 @@ namespace zebra {
 	};
 
 	struct Mesh {
-		std::vector<P3N3C3> _vertices;
+		std::vector<P3N3C3U2> _vertices;
 		AllocBuffer _vertex_buffer;
 
 		bool load_from_obj(const char* file);

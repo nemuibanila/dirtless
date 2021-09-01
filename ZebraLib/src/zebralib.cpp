@@ -23,6 +23,7 @@
 #include "g_pipeline.h"
 #include "g_mesh.h"
 #include "g_vec.h"
+#include "g_texture.h"
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
@@ -505,6 +506,12 @@ namespace zebra {
 		} else {
 			DBG("mesh vertex shader loaded");
 		}
+		VkShaderModule textured_mesh_shader;
+		if (!load_shader_module("../shaders/textured_lit.frag.spv", &textured_mesh_shader)) {
+			DBG("error with textured_lit fragment shader");
+		} else {
+			DBG("textured_lit fragment shader loaded");
+		}
 
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info = vki::pipeline_layout_create_info();
@@ -556,7 +563,7 @@ namespace zebra {
 		);
 
 
-		auto vertex_description = P3N3C3::get_vertex_description();
+		auto vertex_description = P3N3C3U2::get_vertex_description();
 		pipeline_builder._vertex_input_info.vertexAttributeDescriptionCount = (u32)vertex_description.attributes.size();
 		pipeline_builder._vertex_input_info.pVertexAttributeDescriptions = vertex_description.attributes.data();
 		pipeline_builder._vertex_input_info.vertexBindingDescriptionCount = (u32)vertex_description.bindings.size();
@@ -565,6 +572,15 @@ namespace zebra {
 
 		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
 		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
+
+		pipeline_builder._shader_stages.clear();
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex));
+		pipeline_builder._shader_stages.push_back(
+			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, textured_mesh_shader));
+
+		auto tex_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
+		create_material(tex_pipeline, _mesh_pipeline_layout, "texturedmesh");
 
 		//cleanup
 		vkDestroyShaderModule(_vk.device(), default_lit_frag, nullptr);
@@ -590,9 +606,9 @@ namespace zebra {
 		std::uniform_real_distribution<float> frandom(0, 1);
 
 		_renderables.push_back(monkey);
-		for (int x = -30; x <= 30; x++) {
-			for (int y = -30; y <= 30; y++) {
-				for (int z = -30; z <= 30; z++) {
+		for (int x = -5; x <= 5; x++) {
+			for (int y = -5; y <= 5; y++) {
+				for (int z = -5; z <= 5; z++) {
 					RenderObject tri;
 					tri.mesh = get_mesh("triangle");
 					tri.material = get_material("defaultmesh");
@@ -625,6 +641,12 @@ namespace zebra {
 				}
 			}
 		}
+
+		RenderObject map;
+		map.mesh = get_mesh("empire");
+		map.material = get_material("texturedmesh");
+		map.transform = glm::translate(glm::mat4{ 1.0f }, glm::vec3{ 5, -10, 0 });
+		_renderables.push_back(map);
 
 
 	}
@@ -1072,6 +1094,11 @@ namespace zebra {
 
 		_meshes["monkey"] = _monkey_mesh;
 		_meshes["triangle"] = _triangle_mesh;
+
+		Mesh lost_empire{};
+		lost_empire.load_from_obj("../assets/lost_empire.obj");
+		upload_mesh(lost_empire);
+		_meshes["empire"] = lost_empire;
 	}
 
 	void zCore::upload_mesh(Mesh& mesh) {
@@ -1430,5 +1457,13 @@ namespace zebra {
 			aligned_size = (aligned_size + min_ubo_alignment - 1) & ~(min_ubo_alignment - 1);
 		}
 		return aligned_size;
+	}
+
+	void zCore::load_images() {
+		Texture lost_empire;
+		vku::load_image_from_file(_up, "../assets/lost_empire-RGBA.png", lost_empire.image);
+		VkImageViewCreateInfo image_info = vki::imageview_create_info(VK_FORMAT_R8G8B8A8_SRGB, lost_empire.image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+		vkCreateImageView(_vk.device(), &image_info, nullptr, &lost_empire.view);
+		_textures["empire_diffuse"] = lost_empire;
 	}
 }

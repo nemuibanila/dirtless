@@ -199,6 +199,7 @@ namespace zebra {
 		void init_upload_context();
 		void init_scene();
 		void init_imgui();
+		void load_images();
 		bool recreate_swapchain();
 		bool create_window();
 		
@@ -247,6 +248,7 @@ namespace zebra {
 		std::vector<RenderObject> _renderables;
 		std::unordered_map<std::string, Material> _materials;
 		std::unordered_map<std::string, Mesh> _meshes;
+		std::unordered_map<std::string, Texture> _textures;
 
 		FirstPersonPerspectiveCamera _camera;
 

@@ -93,6 +93,7 @@ bool vku::load_image_from_file(zebra::UploadContext& up, const char* file, zebra
 
 	vmaDestroyBuffer(up.allocator, staging_buffer.buffer, staging_buffer.allocation);
 
+	DBG("Texture loaded sucessfully: " << file);
 	out_image = gpu_image;
 	return true;
 }

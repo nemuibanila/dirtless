@@ -43,8 +43,11 @@ namespace zebra {
 					tinyobj::real_t ny = attrib.normals[3 * idx.normal_index + 1];
 					tinyobj::real_t nz = attrib.normals[3 * idx.normal_index + 2];
 
+					tinyobj::real_t ux = attrib.texcoords[2 * idx.texcoord_index + 0];
+					tinyobj::real_t uy = attrib.texcoords[2 * idx.texcoord_index + 1];
+
 					//copy it into our vertex
-					P3N3C3 new_vert;
+					P3N3C3U2 new_vert;
 					new_vert.pos.x = vx;
 					new_vert.pos.y = vy;
 					new_vert.pos.z = vz;
@@ -52,6 +55,9 @@ namespace zebra {
 					new_vert.normal.x = nx;
 					new_vert.normal.y = ny;
 					new_vert.normal.z = nz;
+
+					new_vert.uv.x = ux;
+					new_vert.uv.y = uy;
 
 					//we are setting the vertex color as the vertex normal. This is just for display purposes
 					new_vert.color = new_vert.normal;

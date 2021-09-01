@@ -2,8 +2,10 @@
 layout (location = 0) in vec3 vPosition;
 layout (location = 1) in vec3 vNormal;
 layout (location = 2) in vec3 vColor;
+layout (location = 3) in vec2 vTexCoord;
 
 layout (location = 0) out vec3 outColor;
+layout (location = 1) out vec2 texCoord;
 
 layout(set = 0, binding = 0) uniform  SceneData{   
     vec4 fogColor; // w is for exponent
@@ -48,4 +50,5 @@ void main()
 	outColor = 0.4f * vColor 
 		+ 0.4f * vColor * makeupBuffer.makeup[gl_BaseInstance].color.xyz 
 		+ 0.2f * makeupBuffer.makeup[gl_BaseInstance].color.xyz;
+	texCoord = vTexCoord;
 }
