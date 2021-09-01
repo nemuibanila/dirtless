@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include "g_types.h"
+#include "g_buffer.h"
 #include <filesystem>
 
 namespace zebra {

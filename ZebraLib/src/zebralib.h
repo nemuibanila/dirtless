@@ -14,6 +14,7 @@
 
 #include "zebratypes.h"
 #include "g_types.h"
+#include "g_buffer.h"
 #include "g_camera.h"
 #include "g_mesh.h"
 #include "z_debug.h"
@@ -169,9 +170,10 @@ namespace zebra {
 	constexpr u32 FRAME_OVERLAP = 2u;
 	constexpr float TICK_DT = 1.f / 100.f;
 
-	AllocBuffer create_buffer(VmaAllocator& allocator, size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage);
+	
 	void vk_immediate(UploadContext& up, std::function<void(VkCommandBuffer cmd)>&& function);
-
+	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset);
+	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh);
 
 	class zCore {
 	protected:

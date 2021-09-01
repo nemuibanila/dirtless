@@ -24,6 +24,7 @@
 #include "g_mesh.h"
 #include "g_vec.h"
 #include "g_texture.h"
+#include "g_buffer.h"
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
@@ -1156,42 +1157,24 @@ namespace zebra {
 
 	void zCore::upload_mesh(Mesh& mesh) {
 		const size_t buffer_size = mesh._vertices.size() * sizeof(mesh._vertices[0]);
-
-		VkBufferCreateInfo staging_info = {
-			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-			.pNext = nullptr,
-			.size = (u32)buffer_size,
-			.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		};
-
-		VmaAllocationCreateInfo staging_alloc_info = {
-			.usage = VMA_MEMORY_USAGE_CPU_ONLY,
-		};
-
-		AllocBuffer staging_buffer;
-		VK_CHECK(vmaCreateBuffer(_vk.allocator, &staging_info, &staging_alloc_info, &staging_buffer.buffer, &staging_buffer.allocation, nullptr));
 		
-		void* data;
-		vmaMapMemory(_vk.allocator, staging_buffer.allocation, &data);
-		memcpy(data, mesh._vertices.data(), buffer_size);
-		vmaUnmapMemory(_vk.allocator, staging_buffer.allocation);
+		auto staging_buffer = create_buffer(_vk.allocator, buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+
+		{
+			MappedBuffer<char> staging_map{ _vk.allocator, staging_buffer };
+			memcpy(staging_map.data, mesh._vertices.data(), buffer_size);
+		}
 
 		if (_vk.allocator->IsIntegratedGpu()) {
 			// we dont need to copy, as cpu and gpu visible memory are usually the same
 			mesh._vertex_buffer = staging_buffer;
 		} else {
 			// need to copy from cpu to gpu
-			VkBufferCreateInfo buffer_info = {
-				.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-				.size = (u32)buffer_size,
-				.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			};
+			mesh._vertex_buffer = create_buffer(_vk.allocator, 
+				buffer_size, 
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VMA_MEMORY_USAGE_GPU_ONLY);
 
-			VmaAllocationCreateInfo vma_alloc_info = {
-				.usage = VMA_MEMORY_USAGE_GPU_ONLY,
-			};
-
-			VK_CHECK(vmaCreateBuffer(_vk.allocator, &buffer_info, &vma_alloc_info, &mesh._vertex_buffer.buffer, &mesh._vertex_buffer.allocation, nullptr));
 
 			// copy from staging to vertex
 			vk_immediate(_up, [=](VkCommandBuffer cmd) {
@@ -1230,23 +1213,6 @@ namespace zebra {
 		auto it = _meshes.find(name);
 		if (it == _meshes.end()) return nullptr;
 		else return &(*it).second;
-	}
-
-	AllocBuffer create_buffer(VmaAllocator& allocator, size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage) {
-		VkBufferCreateInfo buffer_info = {
-			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-			.pNext = nullptr,
-			.size = alloc_size,
-			.usage = usage,
-		};
-
-		VmaAllocationCreateInfo vma_info = {
-			.usage = memory_usage,
-		};
-
-		AllocBuffer buf{};
-		VK_CHECK(vmaCreateBuffer(allocator, &buffer_info, &vma_info, &buf.buffer, &buf.allocation, nullptr));
-		return buf;
 	}
 
 	void zCore::setup_draw() {
@@ -1403,32 +1369,27 @@ namespace zebra {
 		scene_parameters.ambient_color = { (sin(_df.global_current_time)+1.f)/2.f,0,(cos(_df.global_current_time))+1.f/2.f,1 };
 		scene_parameters.camera = camera_data;
 		{ // CPUTOGPU -- scene buffer copy
-			char* data;
-			vmaMapMemory(_vk.allocator, scene_parameter_buffer.allocation, (void**)&data);
-			auto offset_ptr = data + scene_buffer_offset;
+			MappedBuffer<char> scene_map{ _vk.allocator, scene_parameter_buffer };
+			auto offset_ptr = scene_map.data + scene_buffer_offset;
 			memcpy(offset_ptr, &scene_parameters, sizeof(scene_parameters));
-			vmaUnmapMemory(_vk.allocator, scene_parameter_buffer.allocation);
 		}
 
 		
-		void* object_data; // CPUTOGPU object buffer copy 
-		vmaMapMemory(_vk.allocator, current_frame().object_buffer.allocation, &object_data);
-		GPUObjectData* objectSSBO = (GPUObjectData*)object_data;
-		for (size_t i = 0; i < render_objects.size(); i++) {
-			RenderObject& object = render_objects.data()[i];
-			objectSSBO[i].model_matrix = object.transform;
+		{
+			MappedBuffer<GPUObjectData> object_map{ _vk.allocator, current_frame().object_buffer };
+			for (size_t i = 0; i < render_objects.size(); i++) {
+				RenderObject& object = render_objects.data()[i];
+				object_map[i].model_matrix = object.transform;
+			}
 		}
-		vmaUnmapMemory(_vk.allocator, current_frame().object_buffer.allocation);
 
-		void* makeup_data; // CPUTOGPU makeup buffer copy 
-		vmaMapMemory(_vk.allocator, current_frame().makeup_buffer.allocation, &makeup_data);
-		GPUMakeupData* makeupSSBO = (GPUMakeupData*)makeup_data;
-		for (size_t i = 0; i < render_objects.size(); i++) {
-			RenderObject& object = render_objects[i];
-			makeupSSBO[i].color = object.makeup.color;
+		{
+			MappedBuffer<GPUMakeupData> makeup_map{ _vk.allocator, current_frame().makeup_buffer };
+			for (size_t i = 0; i < render_objects.size(); i++) {
+				RenderObject& object = render_objects[i];
+				makeup_map[i].color = object.makeup.color;
+			}
 		}
-		vmaUnmapMemory(_vk.allocator, current_frame().makeup_buffer.allocation);
-
 		if (render_objects.empty()) return;
 		assert(render_objects.size() > 0);
 
