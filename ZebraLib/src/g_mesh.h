@@ -5,6 +5,7 @@
 
 namespace zebra {
 	struct Material {
+		VkDescriptorSet texture_set{ VK_NULL_HANDLE };
 		VkPipeline pipeline;
 		VkPipelineLayout pipeline_layout;
 	};

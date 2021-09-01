@@ -67,6 +67,7 @@ namespace zebra {
 
 		VkDescriptorSetLayout global_set_layout;
 		VkDescriptorSetLayout object_set_layout;
+		VkDescriptorSetLayout texture_set_layout;
 		VkDescriptorPool descriptor_pool;
 
 		VkPhysicalDeviceProperties gpu_properties;

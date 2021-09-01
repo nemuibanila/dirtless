@@ -164,6 +164,8 @@ namespace zebra {
 
 
 		DBG("-- resources");
+		load_images();
+
 		DBG("meshes");
 		load_meshes();
 
@@ -538,7 +540,7 @@ namespace zebra {
 		pipeline_builder._color_blend_attachment = vki::color_blend_attachment_state();
 		pipeline_builder._depth_stencil = vki::depth_stencil_create_info(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
 
-		// mesh
+		// mesh color shader
 		pipeline_builder._shader_stages.clear();
 		auto mesh_pipeline_layout_info = vki::pipeline_layout_create_info();
 		VkPushConstantRange push_constant = {
@@ -573,19 +575,32 @@ namespace zebra {
 		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
 		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
 
+		// single texture mesh shader
+		auto stex_pipeline_layout_info = mesh_pipeline_layout_info;
+		auto tex_set_layouts = { _vk.global_set_layout, _vk.object_set_layout, _vk.texture_set_layout };
+		stex_pipeline_layout_info.setLayoutCount = tex_set_layouts.size();
+		stex_pipeline_layout_info.pSetLayouts = tex_set_layouts.begin();
+
+		VkPipelineLayout stex_pipe_layout;
+		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &stex_pipeline_layout_info, nullptr, &stex_pipe_layout));
+
 		pipeline_builder._shader_stages.clear();
+		pipeline_builder._pipelineLayout = stex_pipe_layout;
 		pipeline_builder._shader_stages.push_back(
 			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex));
 		pipeline_builder._shader_stages.push_back(
 			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, textured_mesh_shader));
 
 		auto tex_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
-		create_material(tex_pipeline, _mesh_pipeline_layout, "texturedmesh");
+		create_material(tex_pipeline, stex_pipe_layout, "texturedmesh");
 
 		//cleanup
 		vkDestroyShaderModule(_vk.device(), default_lit_frag, nullptr);
+		vkDestroyShaderModule(_vk.device(), textured_mesh_shader, nullptr);
 		vkDestroyShaderModule(_vk.device(), mesh_triangle_vertex, nullptr);
 		main_delq.push_function([=]() {
+			vkDestroyPipelineLayout(_vk.device(), stex_pipe_layout, nullptr);
+			vkDestroyPipeline(_vk.device(), tex_pipeline, nullptr);
 			vkDestroyPipelineLayout(_vk.device(), _mesh_pipeline_layout, nullptr);
 			vkDestroyPipeline(_vk.device(), _mesh_pipeline, nullptr);
 			});
@@ -641,6 +656,27 @@ namespace zebra {
 				}
 			}
 		}
+		auto sampler_info = vki::sampler_create_info(VK_FILTER_NEAREST);
+		VkSampler blocky_sampler;
+		vkCreateSampler(_vk.device(), &sampler_info, nullptr, &blocky_sampler);
+
+		auto textured_mat = get_material("texturedmesh");
+		VkDescriptorSetAllocateInfo alloc_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.pNext = nullptr,
+			.descriptorPool = _vk.descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &_vk.texture_set_layout,
+		};
+		vkAllocateDescriptorSets(_vk.device(), &alloc_info, &textured_mat->texture_set);
+
+		VkDescriptorImageInfo image_buffer_info;
+		image_buffer_info.sampler = blocky_sampler;
+		image_buffer_info.imageView = _textures["empire_diffuse"].view;
+		image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkWriteDescriptorSet texture1 = vki::write_descriptor_image(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, textured_mat->texture_set, &image_buffer_info, 0);
+		vkUpdateDescriptorSets(_vk.device(), 1, &texture1, 0, nullptr);
 
 		RenderObject map;
 		map.mesh = get_mesh("empire");
@@ -690,6 +726,7 @@ namespace zebra {
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10},
 			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10},
 		};
 		
 		VkDescriptorPoolCreateInfo pool_info = {
@@ -727,7 +764,7 @@ namespace zebra {
 		auto object_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
 		auto object2_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1);
 		auto object_bindings = { object_bind, object2_bind };
-		VkDescriptorSetLayoutCreateInfo set_2_info = {
+		VkDescriptorSetLayoutCreateInfo object_set_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 			.pNext = nullptr,
 			.flags = 0,
@@ -735,7 +772,17 @@ namespace zebra {
 			.pBindings = object_bindings.begin(),
 		};
 
-		vkCreateDescriptorSetLayout(_vk.device(), &set_2_info, nullptr, &_vk.object_set_layout);
+		vkCreateDescriptorSetLayout(_vk.device(), &object_set_info, nullptr, &_vk.object_set_layout);
+
+		auto texture_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
+		VkDescriptorSetLayoutCreateInfo texture_set_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+			.bindingCount = 1,
+			.pBindings = &texture_bind,
+		};
+		vkCreateDescriptorSetLayout(_vk.device(), &texture_set_info, nullptr, &_vk.texture_set_layout);
 
 
 		main_delq.push_function([=]() {
@@ -1365,8 +1412,15 @@ namespace zebra {
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 0, 1, &current_frame().global_descriptor, (u32)offsets.size(), offsets.begin());
 			
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 1, 1, &current_frame().object_descriptor, 0, nullptr);
+		
+				if (object.material->texture_set != VK_NULL_HANDLE) {
+					vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 2, 1, &object.material->texture_set, 0, nullptr);
+				}
+			
 			}
 			assert(last_material != nullptr);
+
+		
 
 			//MeshPushConstants constants;
 			//constants.render_matrix = object.transform;

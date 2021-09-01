@@ -57,7 +57,7 @@ namespace zebra {
 					new_vert.normal.z = nz;
 
 					new_vert.uv.x = ux;
-					new_vert.uv.y = uy;
+					new_vert.uv.y = 1.0f - uy;
 
 					//we are setting the vertex color as the vertex normal. This is just for display purposes
 					new_vert.color = new_vert.normal;

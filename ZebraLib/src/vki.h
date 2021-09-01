@@ -201,4 +201,32 @@ namespace vki {
 
 		return write;
 	}
+
+	constexpr VkSamplerCreateInfo sampler_create_info(VkFilter filters, VkSamplerAddressMode sampler_address_mode = VK_SAMPLER_ADDRESS_MODE_REPEAT) {
+		VkSamplerCreateInfo info = {
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.pNext = nullptr,
+			.magFilter = filters,
+			.minFilter = filters,
+			.addressModeU = sampler_address_mode,
+			.addressModeV = sampler_address_mode,
+			.addressModeW = sampler_address_mode,
+		};
+		return info;
+	}
+
+	constexpr VkWriteDescriptorSet write_descriptor_image(VkDescriptorType type, VkDescriptorSet dest_set, VkDescriptorImageInfo* image_info, uint32_t binding)
+	{
+		VkWriteDescriptorSet write = {
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.pNext = nullptr,
+			.dstSet = dest_set,
+			.dstBinding = binding,
+			.descriptorCount = 1,
+			.descriptorType = type,
+			.pImageInfo = image_info,
+		};
+		return write;
+	}
 }
+
