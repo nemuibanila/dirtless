@@ -188,17 +188,22 @@ namespace zebra {
 
 	// OBJECT SYSTEM IN NEED OF REWORK
 	const int MAX_OBJECTS = 640000;
+	const int MAX_COMMANDS = 5000;
 	bool zCore::init_per_frame_data() {
 		for (auto i = 0u; i < FRAME_OVERLAP; i++) {
+			auto& frame = frames[i];
 
 			// grow dynamically eventually
 
-			frames[i].object_buffer = create_buffer(_vk.allocator, sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-			frames[i].makeup_buffer = create_buffer(_vk.allocator, sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			frame.object_buffer = create_buffer(_vk.allocator, sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			frame.makeup_buffer = create_buffer(_vk.allocator, sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			frame.indirect_buffer = create_buffer(_vk.allocator, sizeof(VkDrawIndirectCommand) * MAX_COMMANDS, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
 
 			main_delq.push_function([=]() {
-				vmaDestroyBuffer(_vk.allocator, frames[i].makeup_buffer.buffer, frames[i].makeup_buffer.allocation);
-				vmaDestroyBuffer(_vk.allocator, frames[i].object_buffer.buffer, frames[i].object_buffer.allocation);
+				vmaDestroyBuffer(_vk.allocator, frame.makeup_buffer.buffer, frame.makeup_buffer.allocation);
+				vmaDestroyBuffer(_vk.allocator, frame.object_buffer.buffer, frame.object_buffer.allocation);
+				vmaDestroyBuffer(_vk.allocator, frame.indirect_buffer.buffer, frame.indirect_buffer.allocation);
 				});
 		}
 

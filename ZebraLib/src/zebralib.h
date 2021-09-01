@@ -34,6 +34,7 @@ namespace zebra {
 		AllocBuffer camera_buffer;
 		AllocBuffer object_buffer;
 		AllocBuffer makeup_buffer;
+		AllocBuffer indirect_buffer;
 		VkDescriptorSet global_descriptor;
 		VkDescriptorSet object_descriptor;
 	};
