@@ -95,6 +95,13 @@ namespace zebra {
 		double global_current_time;
 	};
 
+	struct IndirectBatch {
+		Mesh* mesh;
+		Material* material;
+		u32 first;
+		u32 count;
+	};
+
 	struct DeletionQueue
 	{
 		std::deque<std::function<void()>> deletors;

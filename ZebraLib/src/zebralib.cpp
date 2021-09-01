@@ -41,6 +41,7 @@ namespace zebra {
 		this->cleanup();
 	}
 
+	// OK 01.09.2021
 	bool zCore::start_application() {
 		if (!init_gfx()) return false;
 		init_scene();
@@ -57,6 +58,7 @@ namespace zebra {
 			glfwSetInputMode(_window.handle, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
 		}
 
+		// -- debugging camera and such
 		this->action_map[EXIT_PROGRAM] = [this]() {
 			this->die = true;
 		};
@@ -119,6 +121,7 @@ namespace zebra {
 			.action = InputAction::MOVE_FLY_DOWN,
 		};
 		key_inputs.push_back(down);
+		// --
 
 		setup_draw();
 
@@ -147,11 +150,11 @@ namespace zebra {
 		if (!this->init_swapchain()) return false;
 
 		DBG("per frame data");
-		if (!this->init_swapchain_per_frame_data()) return false;
+		if (!this->init_swapchain_per_frame_data()) return false; 
 		init_upload_context();
 
 		DBG("render pass");
-		if (!this->init_default_renderpass()) return false;
+		if (!this->init_default_renderpass()) return false; // ???
 
 		DBG("framebuffers");
 		if (!this->init_framebuffers()) return false;
@@ -181,6 +184,8 @@ namespace zebra {
 		};
 		return true;
 	}
+
+	// OBJECT SYSTEM IN NEED OF REWORK
 	const int MAX_OBJECTS = 640000;
 	bool zCore::init_per_frame_data() {
 		for (auto i = 0u; i < FRAME_OVERLAP; i++) {
@@ -420,6 +425,7 @@ namespace zebra {
 		return true;
 	}
 
+	// OK 01.09.2021
 	bool zCore::init_vulkan() {
 		if (!glfwVulkanSupported()) {
 			DBG("Vulkan is not supported.");
@@ -1046,7 +1052,7 @@ namespace zebra {
 		//DBG("cfwd " << _camera.forward());
 		if (movement_dir != glm::vec2{ 0.f, 0.f }) {
 			auto direction = glm::normalize(_camera.right() * movement_dir.x + _camera.forward() * movement_dir.y);
-			float speed = 4.f;
+			float speed = 12.f;
 			_camera.apply_movement(TICK_DT * speed * direction);
 		}
 
@@ -1361,7 +1367,30 @@ namespace zebra {
 		}
 	}
 
+	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset) {
+
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline);
+
+		auto offsets = { scene_buffer_offset };
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 0, 1, &frame.global_descriptor, (u32)offsets.size(), offsets.begin());
+
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 1, 1, &frame.object_descriptor, 0, nullptr);
+
+		if (material->texture_set != VK_NULL_HANDLE) {
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 2, 1, &material->texture_set, 0, nullptr);
+		}
+
+	}
+
+	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh) {
+		VkDeviceSize offset = 0;
+		vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->_vertex_buffer.buffer, &offset);
+	}
+
 	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
+
+		// -- pushing around data into buffers
+
 		glm::mat4 view = _camera.view();
 		glm::mat4 projection = _camera.projection();
 		GPUCameraData camera_data = {
@@ -1400,40 +1429,47 @@ namespace zebra {
 		}
 		vmaUnmapMemory(_vk.allocator, current_frame().makeup_buffer.allocation);
 
-		Mesh* last_mesh = nullptr;
-		Material* last_material = nullptr;
-		for (size_t i = 0; i < render_objects.size(); i++) {
-			RenderObject& object = render_objects[i];
-			if (object.material != last_material) {
-				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
-				last_material = object.material;
+		if (render_objects.empty()) return;
+		assert(render_objects.size() > 0);
 
-				auto offsets = { scene_buffer_offset };
-				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 0, 1, &current_frame().global_descriptor, (u32)offsets.size(), offsets.begin());
-			
-				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 1, 1, &current_frame().object_descriptor, 0, nullptr);
-		
-				if (object.material->texture_set != VK_NULL_HANDLE) {
-					vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline_layout, 2, 1, &object.material->texture_set, 0, nullptr);
-				}
-			
+		// -- prepass
+		std::vector<IndirectBatch> draws;
+		bool first = true;
+		IndirectBatch indirect_draw{
+			.mesh = render_objects[0].mesh,
+			.material = render_objects[0].material,
+			.first = 0,
+			.count = 1,
+		};
+		draws.push_back(indirect_draw);
+
+		for (u32 i = 1; i < render_objects.size(); i++) {
+			if (render_objects[i].material == draws.back().material && render_objects[i].mesh == draws.back().mesh) {
+				// same
+				draws.back().count++;
+			} else {
+				// different
+				IndirectBatch diff_draw{
+					.mesh = render_objects[i].mesh,
+					.material = render_objects[i].material,
+					.first = i,
+					.count = 1,
+				};
+				draws.push_back(diff_draw);
 			}
-			assert(last_material != nullptr);
+		}
 
-		
 
-			//MeshPushConstants constants;
-			//constants.render_matrix = object.transform;
-			//vkCmdPushConstants(cmd, object.material->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(constants), &constants);
+		      
+		// -- actual draw code
 
-			if (object.mesh != last_mesh) {
-				VkDeviceSize offset = 0;
-				vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->_vertex_buffer.buffer, &offset);
-				last_mesh = object.mesh;
+		for (auto& draw : draws)  {
+			bind_descriptors(cmd, current_frame(), draw.material, scene_buffer_offset);
+			bind_mesh(cmd, draw.mesh);
+			for (u32 i = 0; i < draw.count; i++) {
+				vkCmdDraw(cmd, (u32)draw.mesh->_vertices.size(), 1, 0, draw.first + i);
 			}
-			assert(last_mesh != nullptr);
-			assert(object.mesh != nullptr);
-			vkCmdDraw(cmd, (u32)object.mesh->_vertices.size(), 1, 0, i);
+
 		}
 
 	}
