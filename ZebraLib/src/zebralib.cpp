@@ -1058,7 +1058,7 @@ namespace zebra {
 		//DBG("cfwd " << _camera.forward());
 		if (movement_dir != glm::vec2{ 0.f, 0.f }) {
 			auto direction = glm::normalize(_camera.right() * movement_dir.x + _camera.forward() * movement_dir.y);
-			float speed = 12.f;
+
 			_camera.apply_movement(TICK_DT * speed * direction);
 		}
 
@@ -1070,7 +1070,6 @@ namespace zebra {
 			fly_dir += 1.f;
 		}
 		if (fly_dir != 0.f) {
-			float fly_speed = 6.f;
 			_camera.apply_movement(TICK_DT * fly_speed * fly_dir * _camera.up());
 		}
 
@@ -1481,13 +1480,16 @@ namespace zebra {
 				ImGui_ImplVulkan_NewFrame();
 				ImGui_ImplGlfw_NewFrame();
 				ImGui::NewFrame();
-				ImGui::Begin("My first tool", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+				ImGui::Begin("Debug tool", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 				ImGui::PlotLines("", frame_times.linearize(), (i32)frame_times.size(), 0, "Frame DT", 0.f, 0.1f, ImVec2(250, 100), 4);
 				auto avg_ft = std::accumulate(frame_times.begin(), frame_times.end(), 0.f)/frame_times.size();
 				
 				ImGui::Text("_gt %f", (float)_df.global_current_time);
 				ImGui::Text("_frameidx %u", current_frame_idx());
 				ImGui::Text("avg frametime %f", avg_ft);
+				ImGui::SliderFloat("Horizontal speed", &speed, 1.f, 50.f);
+				ImGui::SliderFloat("Vertical speed", &fly_speed, 1.f, 50.f);
+
 				ImGui::End();
 				ImGui::Render();
 				

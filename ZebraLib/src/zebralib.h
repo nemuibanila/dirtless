@@ -262,6 +262,8 @@ namespace zebra {
 		std::unordered_map<std::string, Texture> _textures;
 
 		FirstPersonPerspectiveCamera _camera;
+		float speed = 12.f;
+		float fly_speed = 12.f;
 
 		Mesh _triangle_mesh;
 		Mesh _monkey_mesh;
