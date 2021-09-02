@@ -188,7 +188,7 @@ namespace zebra {
 
 	// OBJECT SYSTEM IN NEED OF REWORK
 	const int MAX_OBJECTS = 640000;
-	const int MAX_COMMANDS = 5000;
+	const int MAX_COMMANDS = 640000;
 	bool zCore::init_per_frame_data() {
 		for (auto i = 0u; i < FRAME_OVERLAP; i++) {
 			auto& frame = frames[i];
@@ -252,6 +252,7 @@ namespace zebra {
 		return true;
 	}
 
+	// make more generic, need multiple passes
 	bool zCore::init_default_renderpass() {
 		VkAttachmentDescription color_attachment = {
 			.format = _window.vkb_swapchain.image_format,
@@ -309,6 +310,7 @@ namespace zebra {
 		return true;
 	}
 
+	// as render pass becomes more generic, so does this
 	bool zCore::init_framebuffers() {
 
 		i32 w, h;
@@ -343,6 +345,8 @@ namespace zebra {
 		return true;
 	}
 
+
+	// ok 02.09.2021
 	bool zCore::create_window() {
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		_window.handle = glfwCreateWindow(1280, 720, "Zebra", NULL, NULL);
@@ -355,6 +359,7 @@ namespace zebra {
 		return true;
 	}
 
+	// ok 02.09.2021 -> touches renderpass
 	bool zCore::init_swapchain() {
 		vkDeviceWaitIdle(_vk.device());
 
@@ -403,6 +408,7 @@ namespace zebra {
 		return true;
 	}
 
+	// ok 02.09.2021 -> touches renderpass
 	bool zCore::recreate_swapchain() {
 
 		vkDeviceWaitIdle(_vk.device());
@@ -506,6 +512,7 @@ namespace zebra {
 		return true;
 	}
 
+	// this is testing only 02.09.2021, needs generify
 	bool zCore::init_pipelines() {
 
 		VkShaderModule default_lit_frag;
@@ -621,6 +628,7 @@ namespace zebra {
 		return true;
 	}
 
+	// generify, scene struct
 	void zCore::init_scene() {
 		RenderObject monkey;
 		monkey.mesh = get_mesh("monkey");
@@ -633,9 +641,9 @@ namespace zebra {
 		std::uniform_real_distribution<float> frandom(0, 1);
 
 		_renderables.push_back(monkey);
-		for (int x = -5; x <= 5; x++) {
-			for (int y = -5; y <= 5; y++) {
-				for (int z = -5; z <= 5; z++) {
+		for (int x = -50; x <= 50; x++) {
+			for (int y = -12; y <= 12; y++) {
+				for (int z = -50; z <= 50; z++) {
 					RenderObject tri;
 					tri.mesh = get_mesh("triangle");
 					tri.material = get_material("defaultmesh");
@@ -699,6 +707,7 @@ namespace zebra {
 
 	}
 
+	// ok 02.09.2021
 	bool zCore::cleanup() {
 		vkQueueWaitIdle(_vk.graphics_queue);
 		swapchain_delq.flush();
@@ -712,6 +721,7 @@ namespace zebra {
 		return true;
 	}
 
+	// ok for now 02.09.2021, for multithread loading, one uploadcontext per thread
 	void zCore::init_upload_context() {
 		VkFenceCreateInfo fence_create_info = {
 			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
@@ -733,6 +743,7 @@ namespace zebra {
 
 	}
 
+	// no. 02.09.2021
 	void zCore::init_descriptor_set_layouts() {
 		std::vector<VkDescriptorPoolSize> sizes = {
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
@@ -1087,6 +1098,7 @@ namespace zebra {
 		mouse_delta = glm::vec2(0.f);
 	}
 
+	// move outside
 	bool zCore::load_shader_module(const char* file_path, VkShaderModule* out_shader) {
 		std::filesystem::path file_path_std{ file_path };
 
@@ -1159,6 +1171,7 @@ namespace zebra {
 		_meshes["empire"] = lost_empire;
 	}
 
+	// move outside
 	void zCore::upload_mesh(Mesh& mesh) {
 		const size_t buffer_size = mesh._vertices.size() * sizeof(mesh._vertices[0]);
 		
@@ -1424,16 +1437,25 @@ namespace zebra {
 			}
 		}
 
-
-		      
+		{
+			MappedBuffer<VkDrawIndirectCommand> indirect_map{ _vk.allocator, current_frame().indirect_buffer };
+			for (u32 i = 0; i < render_objects.size(); i++) {
+				RenderObject& object = render_objects[i];
+				indirect_map[i].vertexCount = object.mesh->_vertices.size();
+				indirect_map[i].instanceCount = 1;
+				indirect_map[i].firstVertex = 0;
+				indirect_map[i].firstInstance = i;
+			}
+		}
 		// -- actual draw code
 
 		for (auto& draw : draws)  {
 			bind_descriptors(cmd, current_frame(), draw.material, scene_buffer_offset);
 			bind_mesh(cmd, draw.mesh);
-			for (u32 i = 0; i < draw.count; i++) {
-				vkCmdDraw(cmd, (u32)draw.mesh->_vertices.size(), 1, 0, draw.first + i);
-			}
+			VkDeviceSize indirect_offset = draw.first * sizeof(VkDrawIndirectCommand);
+			u32 draw_stride = sizeof(VkDrawIndirectCommand);
+
+			vkCmdDrawIndirect(cmd, current_frame().indirect_buffer.buffer, indirect_offset, draw.count, draw_stride);
 
 		}
 
