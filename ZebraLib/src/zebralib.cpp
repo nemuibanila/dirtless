@@ -254,61 +254,96 @@ namespace zebra {
 
 	// make more generic, need multiple passes
 	bool zCore::init_default_renderpass() {
-		VkAttachmentDescription color_attachment = {
-			.format = _window.vkb_swapchain.image_format,
-			.samples = VK_SAMPLE_COUNT_1_BIT, // relevant for msaa
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-		};
 
-		VkAttachmentReference color_attachment_ref = {
-			.attachment = 0,
-			.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-		};
+		// forward pass
+		{
+			auto color_attachment = vki::attachment_description(
+				_window.vkb_swapchain.image_format,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				VK_ATTACHMENT_LOAD_OP_CLEAR,
+				VK_ATTACHMENT_STORE_OP_STORE);
 
-		VkAttachmentDescription depth_attachment = {
-			.flags = 0,
-			.format = _vk.depth_format,
-			.samples = VK_SAMPLE_COUNT_1_BIT,
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-		};
+			auto depth_attachment = vki::attachment_description(_vk.depth_texture.format,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				VK_ATTACHMENT_LOAD_OP_CLEAR,
+				VK_ATTACHMENT_STORE_OP_STORE);
 
-		VkAttachmentReference depth_attachment_ref = {
-			.attachment = 1,
-			.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-		};
 
-		VkSubpassDescription subpass = {
-			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-			.colorAttachmentCount = 1,
-			.pColorAttachments = &color_attachment_ref,
-			.pDepthStencilAttachment = &depth_attachment_ref,
-		};
+			VkAttachmentReference color_attachment_ref = {
+				.attachment = 0,
+				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			};
+			VkAttachmentReference depth_attachment_ref = {
+				.attachment = 1,
+				.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			};
 
-		auto attachments = { color_attachment, depth_attachment };
-		VkRenderPassCreateInfo render_pass_info = {
-			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-			.attachmentCount = (u32)attachments.size(),
-			.pAttachments = attachments.begin(),
-			.subpassCount = 1,
-			.pSubpasses = &subpass,
-		};
+			auto color_attachment_references = { color_attachment_ref };
 
-		VK_CHECK(vkCreateRenderPass(_vk.device(), &render_pass_info, nullptr, &_vk.renderpass));
-		swapchain_delq.push_function([=]() {
-			vkDestroyRenderPass(_vk.device(), _vk.renderpass, nullptr);
-			});
+			VkSubpassDescription subpass = {
+				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+				.colorAttachmentCount = (u32)color_attachment_references.size(),
+				.pColorAttachments = color_attachment_references.begin(),
+				.pDepthStencilAttachment = &depth_attachment_ref,
+			};
+
+			auto attachments = { color_attachment, depth_attachment };
+
+			VkRenderPassCreateInfo render_pass_info = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+				.attachmentCount = (u32)attachments.size(),
+				.pAttachments = attachments.begin(),
+				.subpassCount = 1,
+				.pSubpasses = &subpass,
+			};
+
+			VK_CHECK(vkCreateRenderPass(_vk.device(), &render_pass_info, nullptr, &_vk.forward_renderpass));
+			swapchain_delq.push_function([=]() {
+				vkDestroyRenderPass(_vk.device(), _vk.forward_renderpass, nullptr);
+				});
+		}
+
+		// copy pass 
+		{
+			auto color_attachment = vki::attachment_description(
+				_window.vkb_swapchain.image_format,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				VK_ATTACHMENT_LOAD_OP_LOAD,
+				VK_ATTACHMENT_STORE_OP_STORE);
+
+			VkAttachmentReference color_attachment_ref = {
+				.attachment = 0,
+				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			};
+
+			VkSubpassDescription subpass = {
+				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+				.colorAttachmentCount = 1,
+				.pColorAttachments = &color_attachment_ref,
+				.pDepthStencilAttachment = nullptr,
+			};
+
+			VkRenderPassCreateInfo render_pass_info = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+				.attachmentCount = 1,
+				.pAttachments = &color_attachment,
+				.subpassCount = 1,
+				.pSubpasses = &subpass,
+			};
+
+			VK_CHECK(vkCreateRenderPass(_vk.device(), &render_pass_info, nullptr, &_vk.copy_pass));
+			swapchain_delq.push_function([=]() {
+				vkDestroyRenderPass(_vk.device(), _vk.copy_pass, nullptr);
+				});
+		}
+
 		return true;
 	}
+
+
 
 	// as render pass becomes more generic, so does this
 	bool zCore::init_framebuffers() {
@@ -317,25 +352,26 @@ namespace zebra {
 		w = _window.extent().width;
 		h = _window.extent().height;
 
-		VkFramebufferCreateInfo fb_info = {
-			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-			.pNext = nullptr,
-			.renderPass = _vk.renderpass,
-			.attachmentCount = 1,
-			.width = (u32)w,
-			.height = (u32)h,
-			.layers = 1,
-		};
+		// forward pass
+		{
+			auto forward_info = vki::framebuffer_info(_vk.forward_renderpass, _window.extent());
+			auto attachments = { _vk.screen_texture.view, _vk.depth_texture.view };
+			forward_info.attachmentCount = attachments.size();
+			forward_info.pAttachments = attachments.begin();
+			VK_CHECK(vkCreateFramebuffer(_vk.device(), &forward_info, nullptr, &_vk.forward_framebuffer));
 
+		}
+		// final pass to copy to screen
 		const u32 swapchain_imagecount = (u32)_vk.image_views.size();
 		auto swapchain_imageviews = _vk.image_views;
 		_vk.framebuffers = std::vector<VkFramebuffer>(_vk.image_views.size());
 
+		auto final_framebuffer_info = vki::framebuffer_info(_vk.copy_pass, _window.extent());
 		for (auto i = 0u; i < swapchain_imagecount; i++) {
-			auto attachments = { swapchain_imageviews[i], _vk.depth_image_view };
-			fb_info.attachmentCount = (u32)attachments.size();
-			fb_info.pAttachments = attachments.begin();
-			VK_CHECK(vkCreateFramebuffer(_vk.device(), &fb_info, nullptr, &_vk.framebuffers[i]));
+			auto attachments = { swapchain_imageviews[i] };
+			final_framebuffer_info.attachmentCount = (u32)attachments.size();
+			final_framebuffer_info.pAttachments = attachments.begin();
+			VK_CHECK(vkCreateFramebuffer(_vk.device(), &final_framebuffer_info, nullptr, &_vk.framebuffers[i]));
 			swapchain_delq.push_function([=]() {
 				vkDestroyFramebuffer(_vk.device(), _vk.framebuffers[i], nullptr);
 				});
@@ -359,6 +395,11 @@ namespace zebra {
 		return true;
 	}
 
+	void destroy_texture(UploadContext& up, Texture tex) {
+		vkDestroyImageView(up.device, tex.view, nullptr);
+		vmaDestroyImage(up.allocator, tex.image.image, tex.image.allocation);
+	}
+
 	// ok 02.09.2021 -> touches renderpass
 	bool zCore::init_swapchain() {
 		vkDeviceWaitIdle(_vk.device());
@@ -374,36 +415,64 @@ namespace zebra {
 
 		_window.vkb_swapchain = swap_ret.value();
 
-		_vk.images = _window.vkb_swapchain.get_images().value();
-		_vk.image_views = _window.vkb_swapchain.get_image_views().value();
-		swapchain_delq.push_function([=]() {
-			for (auto i = 0u; i < _vk.image_views.size(); i++) {
-				vkDestroyImageView(_vk.device(), _vk.image_views[i], nullptr);
-			}
-			vkb::destroy_swapchain(_window.vkb_swapchain);
-			});
+		// swapchain present textures
+		{
+			_vk.images = _window.vkb_swapchain.get_images().value();
+			_vk.image_views = _window.vkb_swapchain.get_image_views().value();
+			swapchain_delq.push_function([=]() {
+				for (auto i = 0u; i < _vk.image_views.size(); i++) {
+					vkDestroyImageView(_vk.device(), _vk.image_views[i], nullptr);
+				}
+				vkb::destroy_swapchain(_window.vkb_swapchain);
+				});
+		}
+		// depth texture
+		{
+			VkExtent3D depth_image_extent = {
+				.width = _window.extent().width,
+				.height = _window.extent().height,
+				.depth = 1,
+			};
 
-		VkExtent3D depth_image_extent = {
-			.width = _window.extent().width,
-			.height = _window.extent().height,
-			.depth = 1,
-		};
+			_vk.depth_texture.format = VK_FORMAT_D32_SFLOAT;
+			VkImageCreateInfo depth_image_info = vki::image_create_info(_vk.depth_texture.format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_image_extent);
+			VmaAllocationCreateInfo depth_image_allocinfo = {
+				.usage = VMA_MEMORY_USAGE_GPU_ONLY,
+				.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			};
 
-		_vk.depth_format = VK_FORMAT_D32_SFLOAT;
-		VkImageCreateInfo depth_image_info = vki::image_create_info(_vk.depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_image_extent);
-		VmaAllocationCreateInfo depth_image_allocinfo = {
-			.usage = VMA_MEMORY_USAGE_GPU_ONLY,
-			.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-		};
+			vmaCreateImage(_vk.allocator, &depth_image_info, &depth_image_allocinfo, &_vk.depth_texture.image.image, &_vk.depth_texture.image.allocation, nullptr);
+			VkImageViewCreateInfo depth_view_info = vki::imageview_create_info(_vk.depth_texture.format, _vk.depth_texture.image.image, VK_IMAGE_ASPECT_DEPTH_BIT);
+			VK_CHECK(vkCreateImageView(_vk.device(), &depth_view_info, nullptr, &_vk.depth_texture.view));
 
-		vmaCreateImage(_vk.allocator, &depth_image_info, &depth_image_allocinfo, &_vk.depth_image.image, &_vk.depth_image.allocation, nullptr);
-		VkImageViewCreateInfo depth_view_info = vki::imageview_create_info(_vk.depth_format, _vk.depth_image.image, VK_IMAGE_ASPECT_DEPTH_BIT);
-		VK_CHECK(vkCreateImageView(_vk.device(), &depth_view_info, nullptr, &_vk.depth_image_view));
+			swapchain_delq.push_function([=]() {
+				destroy_texture(_up, _vk.depth_texture);
+				});
+		}
+		// screen texture
+		{
+			VkExtent3D render_image_extent = {
+				.width = _window.extent().width,
+				.height = _window.extent().height,
+				.depth = 1,
+			};
+			_vk.screen_texture.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+			auto screen_texture_info = vki::image_create_info(_vk.screen_texture.format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, render_image_extent);
+			VmaAllocationCreateInfo screen_texture_allocinfo = {
+				.usage = VMA_MEMORY_USAGE_GPU_ONLY,
+				.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			};
+			vmaCreateImage(_vk.allocator, &screen_texture_info, &screen_texture_allocinfo, &_vk.screen_texture.image.image, &_vk.screen_texture.image.allocation, nullptr);
+			
+			auto screen_view_info = vki::imageview_create_info(_vk.screen_texture.format, _vk.screen_texture.image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+			VK_CHECK(vkCreateImageView(_vk.device(), &screen_view_info, nullptr, &_vk.screen_texture.view));
 
-		swapchain_delq.push_function([=]() {
-			vkDestroyImageView(_vk.device(), _vk.depth_image_view, nullptr);
-			vmaDestroyImage(_vk.allocator, _vk.depth_image.image, _vk.depth_image.allocation);
-			});
+			swapchain_delq.push_function([=]() {
+				destroy_texture(_up, _vk.screen_texture);
+				});
+
+		}
+
 
 		return true;
 	}
@@ -591,7 +660,7 @@ namespace zebra {
 		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = vertex_description.bindings.data();
 		pipeline_builder._pipelineLayout = _mesh_pipeline_layout;
 
-		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
+		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.forward_renderpass);
 		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
 
 		// single texture mesh shader
@@ -610,7 +679,7 @@ namespace zebra {
 		pipeline_builder._shader_stages.push_back(
 			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, textured_mesh_shader));
 
-		auto tex_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.renderpass);
+		auto tex_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.forward_renderpass);
 		create_material(tex_pipeline, stex_pipe_layout, "texturedmesh");
 
 		//cleanup
@@ -957,7 +1026,7 @@ namespace zebra {
 				},
 		};
 
-		ImGui_ImplVulkan_Init(&init_info, _vk.renderpass);
+		ImGui_ImplVulkan_Init(&init_info, _vk.forward_renderpass);
 		vk_immediate(_up, [=](VkCommandBuffer cmd) {
 			ImGui_ImplVulkan_CreateFontsTexture(cmd);
 			});
@@ -1265,8 +1334,8 @@ namespace zebra {
 			VkRenderPassBeginInfo rp_info = {
 				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 				.pNext = nullptr,
-				.renderPass = _vk.renderpass,
-				.framebuffer = _vk.framebuffers[swapchain_image_idx],
+				.renderPass = _vk.forward_renderpass,
+				.framebuffer = _vk.forward_framebuffer,
 				.renderArea = {
 					.offset = {
 					.x = 0,
@@ -1544,6 +1613,7 @@ namespace zebra {
 		vku::load_image_from_file(_up, "../assets/lost_empire-RGBA.png", lost_empire.image);
 		VkImageViewCreateInfo image_info = vki::imageview_create_info(VK_FORMAT_R8G8B8A8_SRGB, lost_empire.image.image, VK_IMAGE_ASPECT_COLOR_BIT);
 		vkCreateImageView(_vk.device(), &image_info, nullptr, &lost_empire.view);
+		lost_empire.format = image_info.format;
 		_textures["empire_diffuse"] = lost_empire;
 	}
 }

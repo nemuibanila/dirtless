@@ -13,6 +13,7 @@ namespace zebra {
 	struct Texture {
 		AllocImage image;
 		VkImageView view;
+		VkFormat format;
 	};
 
 	struct VertexInputDescription {

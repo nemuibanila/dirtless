@@ -56,16 +56,17 @@ namespace zebra {
 			return vkb_device.device;
 		}
 		VkQueue graphics_queue;
-		VkRenderPass renderpass;
+		VkRenderPass copy_pass;
+		VkRenderPass forward_renderpass;
 		VmaAllocator allocator;
 
+		VkFramebuffer forward_framebuffer;
 		std::vector<VkFramebuffer> framebuffers;
 		std::vector<VkImageView> image_views;
 		std::vector<VkImage> images;
 
-		VkImageView depth_image_view;
-		AllocImage depth_image;
-		VkFormat depth_format;
+		Texture screen_texture;
+		Texture depth_texture;
 
 		VkDescriptorSetLayout global_set_layout;
 		VkDescriptorSetLayout object_set_layout;
@@ -175,6 +176,7 @@ namespace zebra {
 	void vk_immediate(UploadContext& up, std::function<void(VkCommandBuffer cmd)>&& function);
 	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset);
 	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh);
+	void destroy_texture(UploadContext& up, Texture tex);
 
 	class zCore {
 	protected:

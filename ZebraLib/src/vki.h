@@ -66,8 +66,7 @@ namespace vki {
 		return info;
 	}
 
-	constexpr VkPipelineMultisampleStateCreateInfo multisampling_state_create_info()
-	{
+	constexpr VkPipelineMultisampleStateCreateInfo multisampling_state_create_info() {
 		VkPipelineMultisampleStateCreateInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 		info.pNext = nullptr;
@@ -175,8 +174,7 @@ namespace vki {
 		};
 	}
 
-	constexpr VkDescriptorSetLayoutBinding descriptorset_layout_binding(VkDescriptorType type, VkShaderStageFlags stageFlags, u32 binding)
-	{
+	constexpr VkDescriptorSetLayoutBinding descriptorset_layout_binding(VkDescriptorType type, VkShaderStageFlags stageFlags, u32 binding) {
 		VkDescriptorSetLayoutBinding setbind = {};
 		setbind.binding = binding;
 		setbind.descriptorCount = 1;
@@ -187,8 +185,7 @@ namespace vki {
 		return setbind;
 	}
 
-	constexpr VkWriteDescriptorSet write_descriptor_buffer(VkDescriptorType type, VkDescriptorSet dstSet, VkDescriptorBufferInfo* bufferInfo , u32 binding)
-	{
+	constexpr VkWriteDescriptorSet write_descriptor_buffer(VkDescriptorType type, VkDescriptorSet dstSet, VkDescriptorBufferInfo* bufferInfo, u32 binding) {
 		VkWriteDescriptorSet write = {};
 		write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 		write.pNext = nullptr;
@@ -215,8 +212,7 @@ namespace vki {
 		return info;
 	}
 
-	constexpr VkWriteDescriptorSet write_descriptor_image(VkDescriptorType type, VkDescriptorSet dest_set, VkDescriptorImageInfo* image_info, uint32_t binding)
-	{
+	constexpr VkWriteDescriptorSet write_descriptor_image(VkDescriptorType type, VkDescriptorSet dest_set, VkDescriptorImageInfo* image_info, uint32_t binding) {
 		VkWriteDescriptorSet write = {
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.pNext = nullptr,
@@ -227,6 +223,37 @@ namespace vki {
 			.pImageInfo = image_info,
 		};
 		return write;
+	}
+
+	constexpr VkAttachmentDescription attachment_description(VkFormat format,
+		VkImageLayout initial_layout,
+		VkImageLayout final_layout,
+		VkAttachmentLoadOp load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		VkAttachmentStoreOp store_op = VK_ATTACHMENT_STORE_OP_STORE) {
+		return VkAttachmentDescription{
+			.format = format,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = load_op,
+			.storeOp = store_op,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = initial_layout,
+			.finalLayout = final_layout,
+		};
+	}
+
+	constexpr VkFramebufferCreateInfo framebuffer_info(VkRenderPass renderpass, VkExtent2D extent) {
+		VkFramebufferCreateInfo fb_info = {
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.pNext = nullptr,
+			.renderPass = renderpass,
+			.attachmentCount = 0,
+			.pAttachments = nullptr,
+			.width = extent.width,
+			.height = extent.height,
+			.layers = 1,
+		};
+		return fb_info;
 	}
 }
 
