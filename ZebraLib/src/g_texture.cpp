@@ -62,7 +62,7 @@ bool vku::load_image_from_file(zebra::UploadContext& up, const char* file, zebra
 
 		vkCmdPipelineBarrier(cmd, 
 			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 0, &imageBarrier_toTransfer);
+			VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toTransfer);
 
 		VkBufferImageCopy copy_region = {
 			.bufferOffset = 0,

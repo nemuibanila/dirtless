@@ -147,6 +147,9 @@ namespace zebra {
 		DBG("vulkan");
 		if (!this->init_vulkan()) return false;
 
+		auto sampler_info = vki::sampler_create_info(VK_FILTER_NEAREST);
+		vkCreateSampler(_vk.device(), &sampler_info, nullptr, &_vk.default_sampler);
+
 		DBG("swapchain");
 		if (!this->init_swapchain()) return false;
 
@@ -258,13 +261,14 @@ namespace zebra {
 		// forward pass
 		{
 			auto color_attachment = vki::attachment_description(
-				_window.vkb_swapchain.image_format,
+				_vk.screen_texture.format,
 				VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				VK_ATTACHMENT_LOAD_OP_CLEAR,
 				VK_ATTACHMENT_STORE_OP_STORE);
 
-			auto depth_attachment = vki::attachment_description(_vk.depth_texture.format,
+			auto depth_attachment = vki::attachment_description(
+				_vk.depth_texture.format,
 				VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 				VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -309,9 +313,9 @@ namespace zebra {
 		{
 			auto color_attachment = vki::attachment_description(
 				_window.vkb_swapchain.image_format,
-				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				VK_IMAGE_LAYOUT_UNDEFINED,
 				VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-				VK_ATTACHMENT_LOAD_OP_LOAD,
+				VK_ATTACHMENT_LOAD_OP_DONT_CARE,
 				VK_ATTACHMENT_STORE_OP_STORE);
 
 			VkAttachmentReference color_attachment_ref = {
@@ -368,9 +372,8 @@ namespace zebra {
 
 		auto final_framebuffer_info = vki::framebuffer_info(_vk.copy_pass, _window.extent());
 		for (auto i = 0u; i < swapchain_imagecount; i++) {
-			auto attachments = { swapchain_imageviews[i] };
-			final_framebuffer_info.attachmentCount = (u32)attachments.size();
-			final_framebuffer_info.pAttachments = attachments.begin();
+			final_framebuffer_info.attachmentCount = 1;
+			final_framebuffer_info.pAttachments = &swapchain_imageviews[i];
 			VK_CHECK(vkCreateFramebuffer(_vk.device(), &final_framebuffer_info, nullptr, &_vk.framebuffers[i]));
 			swapchain_delq.push_function([=]() {
 				vkDestroyFramebuffer(_vk.device(), _vk.framebuffers[i], nullptr);
@@ -522,7 +525,7 @@ namespace zebra {
 		vkb::InstanceBuilder builder;
 		builder
 			.set_app_name("Zebra")
-			//.request_validation_layers()
+			.request_validation_layers()
 			.use_default_debug_messenger();
 
 		for (u32 i = 0; i < ext_count; i++) {
@@ -538,6 +541,7 @@ namespace zebra {
 
 		glfwCreateWindowSurface(_vk.instance(), _window.handle, nullptr, &_window.surface);
 
+
 		vkb::PhysicalDeviceSelector selector{ _vk.vkb_instance };
 		auto phys_ret = selector
 			.set_surface(_window.surface)
@@ -549,13 +553,17 @@ namespace zebra {
 			return false;
 		}
 
-		vkb::DeviceBuilder device_builder{ phys_ret.value() };
+		auto physical_device = phys_ret.value();
+		vkGetPhysicalDeviceFeatures(physical_device.physical_device, &physical_device.features);
+
+		vkb::DeviceBuilder device_builder{ physical_device };
 		auto dev_ret = device_builder.build();
 		if (!dev_ret) {
 			DBG("device err: " << dev_ret.error().message());
 			return false;
 		}
 		_vk.vkb_device = dev_ret.value();
+		DBG("multidrawindirect: " << _vk.vkb_device.physical_device.features.multiDrawIndirect);
 
 		auto graphics_queue_ret = _vk.vkb_device.get_queue(vkb::QueueType::graphics);
 		if (!graphics_queue_ret) {
@@ -585,23 +593,17 @@ namespace zebra {
 	bool zCore::init_pipelines() {
 
 		VkShaderModule default_lit_frag;
-		if (!load_shader_module("../shaders/default_lit.frag.spv", &default_lit_frag)) {
-			DBG("error with default lit fragment shader");
-		} else {
-			DBG("default lit fragment shader loaded");
-		}
-		VkShaderModule mesh_triangle_vertex;
-		if (!load_shader_module("../shaders/tri_mesh.vert.spv", &mesh_triangle_vertex)) {
-			DBG("error with mesh vertex shader");
-		} else {
-			DBG("mesh vertex shader loaded");
-		}
 		VkShaderModule textured_mesh_shader;
-		if (!load_shader_module("../shaders/textured_lit.frag.spv", &textured_mesh_shader)) {
-			DBG("error with textured_lit fragment shader");
-		} else {
-			DBG("textured_lit fragment shader loaded");
-		}
+		VkShaderModule mesh_triangle_vertex;
+		VkShaderModule blit_fragment;
+		VkShaderModule fullscreen_vertex;
+
+		load_shader_module("../shaders/default_lit.frag.spv", &default_lit_frag);
+		load_shader_module("../shaders/tri_mesh.vert.spv", &mesh_triangle_vertex);
+		load_shader_module("../shaders/textured_lit.frag.spv", &textured_mesh_shader);
+		load_shader_module("../shaders/blit.frag.spv", &blit_fragment);
+		load_shader_module("../shaders/fullscreen.vert.spv", &fullscreen_vertex);
+
 
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info = vki::pipeline_layout_create_info();
@@ -682,15 +684,42 @@ namespace zebra {
 		auto tex_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.forward_renderpass);
 		create_material(tex_pipeline, stex_pipe_layout, "texturedmesh");
 
+		// blit pipeline
+		pipeline_builder._vertex_input_info.vertexAttributeDescriptionCount = 0;
+		pipeline_builder._vertex_input_info.pVertexAttributeDescriptions = nullptr;
+		pipeline_builder._vertex_input_info.vertexBindingDescriptionCount = 0;
+		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = nullptr;
+		pipeline_builder._shader_stages.clear();
+		pipeline_builder._shader_stages.push_back(vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, fullscreen_vertex));
+		pipeline_builder._shader_stages.push_back(vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT,
+			blit_fragment));
+		pipeline_builder._depth_stencil = vki::depth_stencil_create_info(false, false, VK_COMPARE_OP_ALWAYS);
+
+		auto blit_pipeline_layout_info = vki::pipeline_layout_create_info();
+		blit_pipeline_layout_info.setLayoutCount = 1;
+		blit_pipeline_layout_info.pSetLayouts = &_vk.copy_set_layout;
+		VkPipelineLayout blit_pipe_layout;
+		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &blit_pipeline_layout_info, nullptr, &blit_pipe_layout));
+
+		pipeline_builder._pipelineLayout = blit_pipe_layout;
+
+
+		auto blit_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.copy_pass);
+		create_material(blit_pipeline, blit_pipe_layout, "blit");
+
 		//cleanup
 		vkDestroyShaderModule(_vk.device(), default_lit_frag, nullptr);
 		vkDestroyShaderModule(_vk.device(), textured_mesh_shader, nullptr);
 		vkDestroyShaderModule(_vk.device(), mesh_triangle_vertex, nullptr);
+		vkDestroyShaderModule(_vk.device(), fullscreen_vertex, nullptr);
+		vkDestroyShaderModule(_vk.device(), blit_fragment, nullptr);
 		main_delq.push_function([=]() {
 			vkDestroyPipelineLayout(_vk.device(), stex_pipe_layout, nullptr);
 			vkDestroyPipeline(_vk.device(), tex_pipeline, nullptr);
 			vkDestroyPipelineLayout(_vk.device(), _mesh_pipeline_layout, nullptr);
 			vkDestroyPipeline(_vk.device(), _mesh_pipeline, nullptr);
+			vkDestroyPipelineLayout(_vk.device(), blit_pipe_layout, nullptr);
+			vkDestroyPipeline(_vk.device(), blit_pipeline, nullptr);
 			});
 
 
@@ -745,9 +774,6 @@ namespace zebra {
 				}
 			}
 		}
-		auto sampler_info = vki::sampler_create_info(VK_FILTER_NEAREST);
-		VkSampler blocky_sampler;
-		vkCreateSampler(_vk.device(), &sampler_info, nullptr, &blocky_sampler);
 
 		auto textured_mat = get_material("texturedmesh");
 		VkDescriptorSetAllocateInfo alloc_info = {
@@ -760,7 +786,7 @@ namespace zebra {
 		vkAllocateDescriptorSets(_vk.device(), &alloc_info, &textured_mat->texture_set);
 
 		VkDescriptorImageInfo image_buffer_info;
-		image_buffer_info.sampler = blocky_sampler;
+		image_buffer_info.sampler = _vk.default_sampler;
 		image_buffer_info.imageView = _textures["empire_diffuse"].view;
 		image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -876,10 +902,26 @@ namespace zebra {
 		};
 		vkCreateDescriptorSetLayout(_vk.device(), &texture_set_info, nullptr, &_vk.texture_set_layout);
 
+		// for copy pass
+		{
+			auto screen_tex_set_binding = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
+
+			VkDescriptorSetLayoutCreateInfo dsetlayout_cinfo = {
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+				.pNext = nullptr,
+				.flags = 0,
+				.bindingCount = 1,
+				.pBindings = &screen_tex_set_binding,
+			};
+
+			vkCreateDescriptorSetLayout(_vk.device(), &dsetlayout_cinfo, nullptr, &_vk.copy_set_layout);
+		}
 
 		main_delq.push_function([=]() {
 			vkDestroyDescriptorSetLayout(_vk.device(), _vk.global_set_layout, nullptr);
 			vkDestroyDescriptorSetLayout(_vk.device(), _vk.object_set_layout, nullptr);
+			vkDestroyDescriptorSetLayout(_vk.device(), _vk.texture_set_layout, nullptr);
+			vkDestroyDescriptorSetLayout(_vk.device(), _vk.copy_set_layout, nullptr);
 			});
 	}
 
@@ -917,6 +959,16 @@ namespace zebra {
 			};
 			vkAllocateDescriptorSets(_vk.device(), &object_alloc_info, &frames[i].object_descriptor);
 
+			VkDescriptorSetAllocateInfo dset_info = {
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.pNext = nullptr,
+				.descriptorPool = _vk.descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &_vk.copy_set_layout,
+			};
+
+			vkAllocateDescriptorSets(_vk.device(), &dset_info, &frames[i].copy_descriptor);
+
 			// this is what actually sets up the link between descriptors (shader variables) and the buffers
 			VkDescriptorBufferInfo scene_info = {
 				.buffer = scene_parameter_buffer.buffer,
@@ -953,6 +1005,12 @@ namespace zebra {
 			
 			vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
 			// -----------------------
+		}
+
+
+		// for the copy set
+		{
+
 		}
 	}
 
@@ -1194,6 +1252,7 @@ namespace zebra {
 
 		VkShaderModule shader_module;
 		if (vkCreateShaderModule(_vk.device(), &create_info, nullptr, &shader_module) != VK_SUCCESS) {
+			DBG("Error loading shader: " << file_path);
 			return false;
 		}
 
@@ -1338,13 +1397,13 @@ namespace zebra {
 				.framebuffer = _vk.forward_framebuffer,
 				.renderArea = {
 					.offset = {
-					.x = 0,
-					.y = 0,
-			},
-			.extent = _window.vkb_swapchain.extent,
-			},
-			.clearValueCount = (u32)clear_values.size(),
-			.pClearValues = clear_values.begin(),
+						.x = 0,
+						.y = 0,
+					},
+					.extent = _window.vkb_swapchain.extent,
+				},
+				.clearValueCount = (u32)clear_values.size(),
+				.pClearValues = clear_values.begin(),
 			};
 
 			vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -1385,6 +1444,65 @@ namespace zebra {
 			// --
 
 			vkCmdEndRenderPass(current_frame().buf);
+
+			// copy pass here
+			{
+
+				// -- immediate
+				VkDescriptorImageInfo image_buffer_info;
+				image_buffer_info.sampler = _vk.default_sampler;
+				image_buffer_info.imageView = _vk.screen_texture.view;
+				image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+				VkWriteDescriptorSet texture1 = vki::write_descriptor_image(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, current_frame().copy_descriptor, &image_buffer_info, 0);
+				vkUpdateDescriptorSets(_vk.device(), 1, &texture1, 0, nullptr);
+				// -- immediate
+
+				VkRenderPassBeginInfo copy_rp_info = {
+					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+					.pNext = nullptr,
+					.renderPass = _vk.copy_pass,
+					.framebuffer = _vk.framebuffers[swapchain_image_idx],
+					.renderArea = {
+						.offset = {
+							.x = 0,
+							.y = 0,
+						},
+						.extent = _window.vkb_swapchain.extent,
+					},
+					.clearValueCount = 0,
+					.pClearValues = nullptr,
+				};
+				VkViewport viewport = {};
+				viewport.height = (float)_window.extent().height;
+				viewport.width = (float)_window.extent().width;
+				viewport.minDepth = 0.0f;
+				viewport.maxDepth = 1.0f;
+				viewport.x = 0;
+				viewport.y = 0;
+
+
+				VkRect2D scissor = {
+					.offset = { 0, 0 },
+					.extent = _window.extent(),
+				};
+
+				vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
+				vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
+
+
+				vkCmdBeginRenderPass(current_frame().buf, &copy_rp_info, VK_SUBPASS_CONTENTS_INLINE);
+
+				auto blit_material = get_material("blit");
+
+				vkCmdBindPipeline(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline);
+				vkCmdBindDescriptorSets(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline_layout, 0, 1, &current_frame().copy_descriptor, 0, nullptr);
+
+				vkCmdDraw(current_frame().buf, 3, 1, 0, 0);
+				vkCmdEndRenderPass(current_frame().buf);
+			}
+
+
 
 			VK_CHECK(vkEndCommandBuffer(current_frame().buf));
 

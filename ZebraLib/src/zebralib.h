@@ -37,6 +37,7 @@ namespace zebra {
 		AllocBuffer indirect_buffer;
 		VkDescriptorSet global_descriptor;
 		VkDescriptorSet object_descriptor;
+		VkDescriptorSet copy_descriptor;
 	};
 
 	struct UploadContext {
@@ -67,11 +68,14 @@ namespace zebra {
 
 		Texture screen_texture;
 		Texture depth_texture;
+		VkSampler default_sampler;
 
 		VkDescriptorSetLayout global_set_layout;
 		VkDescriptorSetLayout object_set_layout;
 		VkDescriptorSetLayout texture_set_layout;
+		VkDescriptorSetLayout copy_set_layout;
 		VkDescriptorPool descriptor_pool;
+
 
 		VkPhysicalDeviceProperties gpu_properties;
 
