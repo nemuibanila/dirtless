@@ -201,12 +201,13 @@ namespace zebra {
 			frame.object_buffer = create_buffer(_vk.allocator, sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			frame.makeup_buffer = create_buffer(_vk.allocator, sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			frame.indirect_buffer = create_buffer(_vk.allocator, sizeof(VkDrawIndirectCommand) * MAX_COMMANDS, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
+			frame.camera_buffer = create_buffer(_vk.allocator, sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 			main_delq.push_function([=]() {
 				vmaDestroyBuffer(_vk.allocator, frame.makeup_buffer.buffer, frame.makeup_buffer.allocation);
 				vmaDestroyBuffer(_vk.allocator, frame.object_buffer.buffer, frame.object_buffer.allocation);
 				vmaDestroyBuffer(_vk.allocator, frame.indirect_buffer.buffer, frame.indirect_buffer.allocation);
+				vmaDestroyBuffer(_vk.allocator, frames[i].camera_buffer.buffer, frame.camera_buffer.allocation);
 				});
 		}
 
@@ -847,6 +848,7 @@ namespace zebra {
 			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10},
 		};
 		
+
 		VkDescriptorPoolCreateInfo pool_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,
@@ -860,6 +862,9 @@ namespace zebra {
 			vkDestroyDescriptorPool(_vk.device(), _vk.descriptor_pool, nullptr);
 			});
 		
+		// Descriptor set layouts describe, how the resources in a specific set are aligned
+
+		// SET 0: Global uniform set layout
 		VkDescriptorSetLayoutBinding scene_buffer_binding = vki::descriptorset_layout_binding(
 			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -878,7 +883,7 @@ namespace zebra {
 		vkCreateDescriptorSetLayout(_vk.device(), &set_info, nullptr, &_vk.global_set_layout);
 
 
-		// object set layout
+		// SET 1: Object buffer set layout
 		auto object_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
 		auto object2_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1);
 		auto object_bindings = { object_bind, object2_bind };
@@ -892,6 +897,7 @@ namespace zebra {
 
 		vkCreateDescriptorSetLayout(_vk.device(), &object_set_info, nullptr, &_vk.object_set_layout);
 
+		// SET 2: Texture set layout
 		auto texture_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
 		VkDescriptorSetLayoutCreateInfo texture_set_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -904,6 +910,7 @@ namespace zebra {
 
 		// for copy pass
 		{
+			// SET 0: Screen texture set layout
 			auto screen_tex_set_binding = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
 
 			VkDescriptorSetLayoutCreateInfo dsetlayout_cinfo = {
@@ -935,76 +942,24 @@ namespace zebra {
 
 
 		for (auto i = 0u; i < frames.size(); i++) {
-			frames[i].camera_buffer = create_buffer(_vk.allocator, sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+			std::vector<VkDescriptorPoolSize> sizes = {
+				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
+				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10},
+				{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
+				{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10},
+			};
+			VkDescriptorPoolCreateInfo pool_info = {
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = 0, //VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+				.maxSets = 10,
+				.poolSizeCount = (u32)sizes.size(),
+				.pPoolSizes = sizes.data(),
+			};
+			vkCreateDescriptorPool(_vk.device(), &pool_info, nullptr, &frames[i].descriptor_pool);
 			main_delq.push_function([=]() {
-				vmaDestroyBuffer(_vk.allocator, frames[i].camera_buffer.buffer, frames[i].camera_buffer.allocation);
+				vkResetDescriptorPool(_vk.device(), frames[i].descriptor_pool, 0);
+				vkDestroyDescriptorPool(_vk.device(), frames[i].descriptor_pool, nullptr);
 				});
-
-			VkDescriptorSetAllocateInfo alloc_info = {
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.pNext = nullptr,
-				.descriptorPool = _vk.descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &_vk.global_set_layout,
-			};
-
-			vkAllocateDescriptorSets(_vk.device(), &alloc_info, &frames[i].global_descriptor);
-
-			VkDescriptorSetAllocateInfo object_alloc_info = {
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.pNext = nullptr,
-				.descriptorPool = _vk.descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &_vk.object_set_layout,
-			};
-			vkAllocateDescriptorSets(_vk.device(), &object_alloc_info, &frames[i].object_descriptor);
-
-			VkDescriptorSetAllocateInfo dset_info = {
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-				.pNext = nullptr,
-				.descriptorPool = _vk.descriptor_pool,
-				.descriptorSetCount = 1,
-				.pSetLayouts = &_vk.copy_set_layout,
-			};
-
-			vkAllocateDescriptorSets(_vk.device(), &dset_info, &frames[i].copy_descriptor);
-
-			// this is what actually sets up the link between descriptors (shader variables) and the buffers
-			VkDescriptorBufferInfo scene_info = {
-				.buffer = scene_parameter_buffer.buffer,
-				.offset = 0,
-				.range = sizeof(GPUSceneData),
-			};
-			
-			VkDescriptorBufferInfo object_info = {
-				.buffer = frames[i].object_buffer.buffer,
-				.offset = 0,
-				.range = sizeof(GPUObjectData) * MAX_OBJECTS,
-			};
-
-			VkDescriptorBufferInfo makeup_info = {
-				.buffer = frames[i].makeup_buffer.buffer,
-				.offset = 0,
-				.range = sizeof(GPUMakeupData) * MAX_OBJECTS,
-			};
-			
-			VkWriteDescriptorSet scene_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-				frames[i].global_descriptor, &scene_info, 0);
-			
-			VkWriteDescriptorSet object_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				frames[i].object_descriptor, &object_info, 0);
-			
-			VkWriteDescriptorSet makeup_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				frames[i].object_descriptor, &makeup_info, 1);
-
-			auto set_writes = {
-				scene_write,
-				object_write,
-				makeup_write,
-			};
-			
-			vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
-			// -----------------------
 		}
 
 
@@ -1380,70 +1335,59 @@ namespace zebra {
 			VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
 			VkCommandBufferBeginInfo cmd_begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
+			update_frame_descriptor_sets(current_frame());
+
 			VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
-			VkClearValue clear_value;
-			float flash = (float)abs(sin(_df.global_current_time));
-			clear_value.color = { {0.2f, 0.2f, 1.f, 1.f} };
 
-			VkClearValue depth_clear;
-			depth_clear.depthStencil.depth = 1.f;
+			// forward pass
+			{
+				VkClearValue clear_value;
+				float flash = (float)abs(sin(_df.global_current_time));
+				clear_value.color = { {0.2f, 0.2f, 1.f, 1.f} };
 
-			auto clear_values = { clear_value, depth_clear };
+				VkClearValue depth_clear;
+				depth_clear.depthStencil.depth = 1.f;
 
-			VkRenderPassBeginInfo rp_info = {
-				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-				.pNext = nullptr,
-				.renderPass = _vk.forward_renderpass,
-				.framebuffer = _vk.forward_framebuffer,
-				.renderArea = {
-					.offset = {
-						.x = 0,
-						.y = 0,
-					},
-					.extent = _window.vkb_swapchain.extent,
-				},
-				.clearValueCount = (u32)clear_values.size(),
-				.pClearValues = clear_values.begin(),
-			};
+				auto clear_values = { clear_value, depth_clear };
 
-			vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
+				VkRenderPassBeginInfo rp_info = vki::renderpass_begin_info(_vk.forward_renderpass, _vk.forward_framebuffer, _window.vkb_swapchain.extent);
 
-			// -- dynamic state
+				rp_info.clearValueCount = clear_values.size();
+				rp_info.pClearValues = clear_values.begin();
 
-			VkViewport viewport = {};
-			viewport.height = (float)_window.extent().height;
-			viewport.width = (float)_window.extent().width;
-			viewport.minDepth = 0.0f;
-			viewport.maxDepth = 1.0f;
-			viewport.x = 0;
-			viewport.y = 0;
+				vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-			vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
+				// -- dynamic state
 
-			VkRect2D scissor = {
-				.offset = { 0, 0 },
-				.extent = _window.extent(),
-			};
+				VkViewport viewport = vki::viewport_info(_window.extent());
 
-			vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
+				vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
 
-			// -- end dynamic state
+				VkRect2D scissor = {
+					.offset = { 0, 0 },
+					.extent = _window.extent(),
+				};
 
-			// -- camera
+				vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
 
-			_camera.aspect = viewport.width / viewport.height;
+				// -- end dynamic state
 
-			//
+				// -- camera
 
-			draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
+				_camera.aspect = viewport.width / viewport.height;
 
-			auto imgui_draw_data = ImGui::GetDrawData();
-			if (imgui_draw_data != nullptr) {
-				ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, current_frame().buf);
+				//
+
+				draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
+
+				auto imgui_draw_data = ImGui::GetDrawData();
+				if (imgui_draw_data != nullptr) {
+					ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, current_frame().buf);
+				}
+				// --
+
+				vkCmdEndRenderPass(current_frame().buf);
 			}
-			// --
-
-			vkCmdEndRenderPass(current_frame().buf);
 
 			// copy pass here
 			{
@@ -1458,29 +1402,10 @@ namespace zebra {
 				vkUpdateDescriptorSets(_vk.device(), 1, &texture1, 0, nullptr);
 				// -- immediate
 
-				VkRenderPassBeginInfo copy_rp_info = {
-					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-					.pNext = nullptr,
-					.renderPass = _vk.copy_pass,
-					.framebuffer = _vk.framebuffers[swapchain_image_idx],
-					.renderArea = {
-						.offset = {
-							.x = 0,
-							.y = 0,
-						},
-						.extent = _window.vkb_swapchain.extent,
-					},
-					.clearValueCount = 0,
-					.pClearValues = nullptr,
-				};
-				VkViewport viewport = {};
-				viewport.height = (float)_window.extent().height;
-				viewport.width = (float)_window.extent().width;
-				viewport.minDepth = 0.0f;
-				viewport.maxDepth = 1.0f;
-				viewport.x = 0;
-				viewport.y = 0;
+				VkExtent2D copy_pass_extent = _window.vkb_swapchain.extent;
+				VkRenderPassBeginInfo copy_rp_info = vki::renderpass_begin_info(_vk.copy_pass, _vk.framebuffers[swapchain_image_idx], copy_pass_extent);
 
+				VkViewport viewport = vki::viewport_info(_window.extent());
 
 				VkRect2D scissor = {
 					.offset = { 0, 0 },
@@ -1490,9 +1415,7 @@ namespace zebra {
 				vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
 				vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
 
-
 				vkCmdBeginRenderPass(current_frame().buf, &copy_rp_info, VK_SUBPASS_CONTENTS_INLINE);
-
 				auto blit_material = get_material("blit");
 
 				vkCmdBindPipeline(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline);
@@ -1535,6 +1458,75 @@ namespace zebra {
 		} else if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
 			this->recreate_swapchain();
 		}
+	}
+
+	void zCore::update_frame_descriptor_sets(PerFrameData& frame) {
+		vkResetDescriptorPool(_vk.device(), frame.descriptor_pool, 0);
+		VkDescriptorSetAllocateInfo alloc_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.pNext = nullptr,
+			.descriptorPool = frame.descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &_vk.global_set_layout,
+		};
+
+		vkAllocateDescriptorSets(_vk.device(), &alloc_info, &frame.global_descriptor);
+
+		VkDescriptorSetAllocateInfo object_alloc_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.pNext = nullptr,
+			.descriptorPool = frame.descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &_vk.object_set_layout,
+		};
+		vkAllocateDescriptorSets(_vk.device(), &object_alloc_info, &frame.object_descriptor);
+
+		VkDescriptorSetAllocateInfo dset_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+			.pNext = nullptr,
+			.descriptorPool = frame.descriptor_pool,
+			.descriptorSetCount = 1,
+			.pSetLayouts = &_vk.copy_set_layout,
+		};
+
+		vkAllocateDescriptorSets(_vk.device(), &dset_info, &frame.copy_descriptor);
+
+		// this is what actually sets up the link between descriptors (shader variables) and the buffers
+		VkDescriptorBufferInfo scene_info = {
+			.buffer = scene_parameter_buffer.buffer,
+			.offset = 0,
+			.range = sizeof(GPUSceneData),
+		};
+
+		VkDescriptorBufferInfo object_info = {
+			.buffer = frame.object_buffer.buffer,
+			.offset = 0,
+			.range = sizeof(GPUObjectData) * MAX_OBJECTS,
+		};
+
+		VkDescriptorBufferInfo makeup_info = {
+			.buffer = frame.makeup_buffer.buffer,
+			.offset = 0,
+			.range = sizeof(GPUMakeupData) * MAX_OBJECTS,
+		};
+
+		VkWriteDescriptorSet scene_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+			frame.global_descriptor, &scene_info, 0);
+
+		VkWriteDescriptorSet object_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			frame.object_descriptor, &object_info, 0);
+
+		VkWriteDescriptorSet makeup_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			frame.object_descriptor, &makeup_info, 1);
+
+		auto set_writes = {
+			scene_write,
+			object_write,
+			makeup_write,
+		};
+
+		vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
+		// -----------------------
 	}
 
 	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset) {

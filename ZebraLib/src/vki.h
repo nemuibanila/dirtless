@@ -255,5 +255,34 @@ namespace vki {
 		};
 		return fb_info;
 	}
+
+	constexpr VkRenderPassBeginInfo renderpass_begin_info(VkRenderPass renderpass, VkFramebuffer framebuffer, VkExtent2D extent) {
+		return VkRenderPassBeginInfo{
+		   .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		   .pNext = nullptr,
+		   .renderPass = renderpass,
+		   .framebuffer = framebuffer,
+		   .renderArea = {
+			   .offset = {
+			   .x = 0,
+			   .y = 0,
+	   },
+	   .extent = extent,
+	   },
+	   .clearValueCount = 0,
+	   .pClearValues = nullptr,
+		};
+	}
+
+	constexpr VkViewport viewport_info(VkExtent2D extent) {
+		VkViewport viewport = {};
+		viewport.height = (float)extent.height;
+		viewport.width = (float)extent.width;
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		viewport.x = 0;
+		viewport.y = 0;
+		return viewport;
+	}
 }
 

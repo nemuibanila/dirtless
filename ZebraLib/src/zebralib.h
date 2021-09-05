@@ -35,6 +35,8 @@ namespace zebra {
 		AllocBuffer object_buffer;
 		AllocBuffer makeup_buffer;
 		AllocBuffer indirect_buffer;
+
+		VkDescriptorPool descriptor_pool;
 		VkDescriptorSet global_descriptor;
 		VkDescriptorSet object_descriptor;
 		VkDescriptorSet copy_descriptor;
@@ -224,6 +226,7 @@ namespace zebra {
 		void setup_draw();
 		void draw();
 		void draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects);
+		void update_frame_descriptor_sets(PerFrameData& frame);
 		void load_meshes();
 
 
