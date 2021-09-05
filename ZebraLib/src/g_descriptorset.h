@@ -8,6 +8,8 @@
 #include "vki.h"
 
 namespace zebra {
+	const u32 DefaultFatSize = 8;
+
 	struct SmallLayoutBinding {
 		u32 binding;
 		VkDescriptorType descriptorType;
@@ -18,8 +20,9 @@ namespace zebra {
 		}
 	};
 
+	template<u32 BufferSize>
 	struct FatSetLayout {
-		static constexpr int Size = 8;
+		static constexpr int Size = BufferSize;
 
 		VkDescriptorSetLayout layout = VK_NULL_HANDLE;
 		u32 binding_count = 0;
@@ -35,23 +38,45 @@ namespace zebra {
 			}
 			return true;
 		}
-		size_t hash() const;
+
+		size_t hash() const {
+			auto result = std::hash<size_t>()(sizeof(bindings));
+			for (u32 i = 0; i < binding_count; i++) {
+				size_t binding_hash = bindings[i].binding | bindings[i].descriptorType << 8 | bindings[i].stageFlags << 32;
+				result ^= std::hash<size_t>()(binding_hash);
+			}
+			return result;
+		}
 	};
 
 	struct FatSetLayoutHasher {
-		std::size_t operator()(const FatSetLayout& k) const {
+		std::size_t operator()(const FatSetLayout<DefaultFatSize>& k) const {
 			return k.hash();
 		}
 	};
 
 	struct DescriptorLayoutCache {
-		std::unordered_set<FatSetLayout, FatSetLayoutHasher> layouts;
-		VkDescriptorSetLayout create(VkDevice device, FatSetLayout& layout);
+		std::unordered_set<FatSetLayout<DefaultFatSize>, FatSetLayoutHasher> layouts;
+		VkDescriptorSetLayout create(VkDevice device, FatSetLayout<DefaultFatSize>& layout);
 
 	};
 
 	struct DescriptorBuilder {
-		FatSetLayout recipe;
+		FatSetLayout<DefaultFatSize> recipe{};
+		std::array<VkWriteDescriptorSet, DefaultFatSize> writes;
+
+		static DescriptorBuilder& begin(VkDevice device, VkDescriptorPool pool, DescriptorLayoutCache& cache);
+		DescriptorBuilder& bind_buffer(u32 binding, VkDescriptorBufferInfo& buffer_info, VkDescriptorType type, VkShaderStageFlags stage_flags);
+		void build(VkDescriptorSet& set);
+		void build(VkDescriptorSet& set, VkDescriptorSetLayout& layout);
+
+
 		// CONTINUE HERE, bob the builder
+
+	protected: 
+		DescriptorBuilder() = default;
+		VkDevice device;
+		VkDescriptorPool pool;
+		DescriptorLayoutCache* cache;
 	};
 }

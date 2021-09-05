@@ -3,16 +3,7 @@
 #include <vulkan/vulkan.h>
 #include "vki.h"
 
-size_t zebra::FatSetLayout::hash() const {
-	auto result = std::hash<size_t>()(sizeof(bindings));
-	for (u32 i = 0; i < binding_count; i++) {
-		size_t binding_hash = bindings[i].binding | bindings[i].descriptorType << 8 | bindings[i].stageFlags << 32;
-		result ^= std::hash<size_t>()(binding_hash);
-	}
-	return result;
-}
-
-VkDescriptorSetLayout zebra::DescriptorLayoutCache::create(VkDevice device, FatSetLayout& layout) {
+VkDescriptorSetLayout zebra::DescriptorLayoutCache::create(VkDevice device, FatSetLayout<DefaultFatSize>& layout) {
 	auto it = layouts.find(layout);
 	if (it != layouts.end()) {
 		return it->layout;
@@ -34,4 +25,52 @@ VkDescriptorSetLayout zebra::DescriptorLayoutCache::create(VkDevice device, FatS
 		layouts.emplace(layout);
 		return layout.layout;
 	}
+}
+
+zebra::DescriptorBuilder& zebra::DescriptorBuilder::begin(VkDevice device, VkDescriptorPool pool, zebra::DescriptorLayoutCache& cache) {
+	zebra::DescriptorBuilder builder{};
+	builder.pool = pool;
+	builder.device = device;
+	builder.cache = &cache;
+	return builder;
+}
+
+
+zebra::DescriptorBuilder& zebra::DescriptorBuilder::bind_buffer(u32 binding, VkDescriptorBufferInfo& buffer_info, VkDescriptorType type, VkShaderStageFlags stage_flags) {
+	SmallLayoutBinding smol = {
+		.binding = binding,
+		.descriptorType = type,
+		.stageFlags = stage_flags,
+	};
+	auto idx = recipe.binding_count++;
+
+	recipe.bindings[idx] = smol;
+	writes[idx] = vki::write_descriptor_buffer(type, VK_NULL_HANDLE, &buffer_info, binding);
+
+	return *this;
+}
+
+void zebra::DescriptorBuilder::build(VkDescriptorSet& set, VkDescriptorSetLayout& layout) {
+	layout = cache->create(device, recipe);
+	
+	// defer to build step
+	VkDescriptorSetAllocateInfo dinfo = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = pool,
+		.descriptorSetCount = 1,
+		.pSetLayouts = &layout, // data dependency fail
+	};
+
+	vkAllocateDescriptorSets(device, &dinfo, &set);
+	for (auto i = 0u; i < recipe.binding_count; i++) {
+		writes[i].dstSet = set;
+	}
+
+	vkUpdateDescriptorSets(device, recipe.binding_count, writes.data(), 0, nullptr);
+	// end defer
+}
+
+void zebra::DescriptorBuilder::build(VkDescriptorSet& set) {
+	VkDescriptorSetLayout layout;
+	zebra::DescriptorBuilder::build(set, layout);
 }
