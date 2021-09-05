@@ -3,6 +3,7 @@
 #include <vk_mem_alloc.h>
 #include "zebratypes.h"
 #include <map>
+#include <array>
 #include <unordered_set>
 
 #include "vki.h"
@@ -18,9 +19,17 @@ namespace zebra {
 		static constexpr VkDescriptorSetLayoutBinding vk_binding(SmallLayoutBinding small) {
 			return vki::descriptorset_layout_binding(small.descriptorType, small.stageFlags, small.binding);
 		}
+
+		static constexpr SmallLayoutBinding small_binding(VkDescriptorSetLayoutBinding huge) {
+			SmallLayoutBinding small;
+			small.binding = huge.binding;
+			small.descriptorType = huge.descriptorType;
+			small.stageFlags = huge.stageFlags;
+			return small;
+		}
 	};
 
-	template<u32 BufferSize>
+	template<u32 BufferSize = DefaultFatSize>
 	struct FatSetLayout {
 		static constexpr int Size = BufferSize;
 
@@ -58,15 +67,17 @@ namespace zebra {
 	struct DescriptorLayoutCache {
 		std::unordered_set<FatSetLayout<DefaultFatSize>, FatSetLayoutHasher> layouts;
 		VkDescriptorSetLayout create(VkDevice device, FatSetLayout<DefaultFatSize>& layout);
-
+		void destroy_cached(VkDevice device);
 	};
 
 	struct DescriptorBuilder {
-		FatSetLayout<DefaultFatSize> recipe{};
+		FatSetLayout<DefaultFatSize> recipe{0};
 		std::array<VkWriteDescriptorSet, DefaultFatSize> writes;
 
-		static DescriptorBuilder& begin(VkDevice device, VkDescriptorPool pool, DescriptorLayoutCache& cache);
+		static DescriptorBuilder begin(VkDevice device, VkDescriptorPool pool, DescriptorLayoutCache& cache);
 		DescriptorBuilder& bind_buffer(u32 binding, VkDescriptorBufferInfo& buffer_info, VkDescriptorType type, VkShaderStageFlags stage_flags);
+		DescriptorBuilder& bind_image(u32 binding, VkDescriptorImageInfo& image_info, VkDescriptorType type, VkShaderStageFlags stage_flags);
+
 		void build(VkDescriptorSet& set);
 		void build(VkDescriptorSet& set, VkDescriptorSetLayout& layout);
 

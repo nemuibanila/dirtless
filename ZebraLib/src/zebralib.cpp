@@ -642,7 +642,33 @@ namespace zebra {
 		mesh_pipeline_layout_info.pushConstantRangeCount = 1;
 		mesh_pipeline_layout_info.pPushConstantRanges = &push_constant;
 
-		auto set_layouts = { _vk.global_set_layout, _vk.object_set_layout };
+		// these layouts could come from reflection
+		// GLOBAL
+		VkDescriptorSetLayout global_uniform_set_layout;
+		{
+			FatSetLayout fatset;
+			fatset.bindings[fatset.binding_count++] = { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT };
+			global_uniform_set_layout = _vk.layout_cache.create(_vk.device(), fatset);
+		}
+
+		// OBJECT
+		VkDescriptorSetLayout object_set_layout;
+		{
+			FatSetLayout fatset;
+			fatset.bindings[fatset.binding_count++] = { 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT };
+			fatset.bindings[fatset.binding_count++] = { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT };
+			object_set_layout = _vk.layout_cache.create(_vk.device(), fatset);
+		}
+
+		// TEXTURE
+		VkDescriptorSetLayout texture_set_layout;
+		{
+			FatSetLayout fatset;
+			fatset.bindings[fatset.binding_count++] = { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT };
+			texture_set_layout = _vk.layout_cache.create(_vk.device(), fatset);
+		}
+
+		auto set_layouts = { global_uniform_set_layout, object_set_layout };
 		mesh_pipeline_layout_info.setLayoutCount = (u32)set_layouts.size();
 		mesh_pipeline_layout_info.pSetLayouts = set_layouts.begin();
 
@@ -668,7 +694,7 @@ namespace zebra {
 
 		// single texture mesh shader
 		auto stex_pipeline_layout_info = mesh_pipeline_layout_info;
-		auto tex_set_layouts = { _vk.global_set_layout, _vk.object_set_layout, _vk.texture_set_layout };
+		auto tex_set_layouts = { global_uniform_set_layout, object_set_layout, texture_set_layout };
 		stex_pipeline_layout_info.setLayoutCount = tex_set_layouts.size();
 		stex_pipeline_layout_info.pSetLayouts = tex_set_layouts.begin();
 
@@ -698,7 +724,7 @@ namespace zebra {
 
 		auto blit_pipeline_layout_info = vki::pipeline_layout_create_info();
 		blit_pipeline_layout_info.setLayoutCount = 1;
-		blit_pipeline_layout_info.pSetLayouts = &_vk.copy_set_layout;
+		blit_pipeline_layout_info.pSetLayouts = &texture_set_layout;
 		VkPipelineLayout blit_pipe_layout;
 		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &blit_pipeline_layout_info, nullptr, &blit_pipe_layout));
 
@@ -776,31 +802,26 @@ namespace zebra {
 			}
 		}
 
-		auto textured_mat = get_material("texturedmesh");
-		VkDescriptorSetAllocateInfo alloc_info = {
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.pNext = nullptr,
-			.descriptorPool = _vk.descriptor_pool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &_vk.texture_set_layout,
-		};
-		vkAllocateDescriptorSets(_vk.device(), &alloc_info, &textured_mat->texture_set);
+
+		VkDescriptorSetLayout texture_set_layout;
+		VkDescriptorSet texture_set;
 
 		VkDescriptorImageInfo image_buffer_info;
 		image_buffer_info.sampler = _vk.default_sampler;
 		image_buffer_info.imageView = _textures["empire_diffuse"].view;
 		image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-		VkWriteDescriptorSet texture1 = vki::write_descriptor_image(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, textured_mat->texture_set, &image_buffer_info, 0);
-		vkUpdateDescriptorSets(_vk.device(), 1, &texture1, 0, nullptr);
+		auto textured_mat = get_material("texturedmesh");
+		DescriptorBuilder::begin(_vk.device(), _vk.descriptor_pool, _vk.layout_cache)
+			.bind_image(0, image_buffer_info, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+			.build(texture_set, texture_set_layout);
+		textured_mat->texture_set = texture_set;
 
 		RenderObject map;
 		map.mesh = get_mesh("empire");
 		map.material = get_material("texturedmesh");
 		map.transform = glm::translate(glm::mat4{ 1.0f }, glm::vec3{ 5, -10, 0 });
 		_renderables.push_back(map);
-
-
 	}
 
 	// ok 02.09.2021
@@ -842,10 +863,10 @@ namespace zebra {
 	// no. 02.09.2021
 	void zCore::init_descriptor_set_layouts() {
 		std::vector<VkDescriptorPoolSize> sizes = {
-			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
-			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10},
-			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
-			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10},
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 100},
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 100},
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 100},
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100},
 		};
 		
 
@@ -860,75 +881,12 @@ namespace zebra {
 		main_delq.push_function([=]() {
 			vkResetDescriptorPool(_vk.device(), _vk.descriptor_pool, 0);
 			vkDestroyDescriptorPool(_vk.device(), _vk.descriptor_pool, nullptr);
-			});
+		});
 		
-		// Descriptor set layouts describe, how the resources in a specific set are aligned
 
-		// SET 0: Global uniform set layout
-		VkDescriptorSetLayoutBinding scene_buffer_binding = vki::descriptorset_layout_binding(
-			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-			0
-		);
-
-		auto buffer_bindings = { scene_buffer_binding };
-		VkDescriptorSetLayoutCreateInfo set_info = {
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-			.pNext = nullptr,
-			.flags = 0,
-			.bindingCount = (u32)buffer_bindings.size(),
-			.pBindings = buffer_bindings.begin(),
-		};
-		
-		vkCreateDescriptorSetLayout(_vk.device(), &set_info, nullptr, &_vk.global_set_layout);
-
-
-		// SET 1: Object buffer set layout
-		auto object_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
-		auto object2_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1);
-		auto object_bindings = { object_bind, object2_bind };
-		VkDescriptorSetLayoutCreateInfo object_set_info = {
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-			.pNext = nullptr,
-			.flags = 0,
-			.bindingCount = (u32)object_bindings.size(),
-			.pBindings = object_bindings.begin(),
-		};
-
-		vkCreateDescriptorSetLayout(_vk.device(), &object_set_info, nullptr, &_vk.object_set_layout);
-
-		// SET 2: Texture set layout
-		auto texture_bind = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
-		VkDescriptorSetLayoutCreateInfo texture_set_info = {
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-			.pNext = nullptr,
-			.flags = 0,
-			.bindingCount = 1,
-			.pBindings = &texture_bind,
-		};
-		vkCreateDescriptorSetLayout(_vk.device(), &texture_set_info, nullptr, &_vk.texture_set_layout);
-
-		// for copy pass
-		{
-			// SET 0: Screen texture set layout
-			auto screen_tex_set_binding = vki::descriptorset_layout_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
-
-			VkDescriptorSetLayoutCreateInfo dsetlayout_cinfo = {
-				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-				.pNext = nullptr,
-				.flags = 0,
-				.bindingCount = 1,
-				.pBindings = &screen_tex_set_binding,
-			};
-
-			vkCreateDescriptorSetLayout(_vk.device(), &dsetlayout_cinfo, nullptr, &_vk.copy_set_layout);
-		}
 
 		main_delq.push_function([=]() {
-			vkDestroyDescriptorSetLayout(_vk.device(), _vk.global_set_layout, nullptr);
-			vkDestroyDescriptorSetLayout(_vk.device(), _vk.object_set_layout, nullptr);
-			vkDestroyDescriptorSetLayout(_vk.device(), _vk.texture_set_layout, nullptr);
-			vkDestroyDescriptorSetLayout(_vk.device(), _vk.copy_set_layout, nullptr);
+			_vk.layout_cache.destroy_cached(_vk.device());
 			});
 	}
 
@@ -1398,8 +1356,11 @@ namespace zebra {
 				image_buffer_info.imageView = _vk.screen_texture.view;
 				image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-				VkWriteDescriptorSet texture1 = vki::write_descriptor_image(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, current_frame().copy_descriptor, &image_buffer_info, 0);
-				vkUpdateDescriptorSets(_vk.device(), 1, &texture1, 0, nullptr);
+				VkDescriptorSet copy_set;
+				DescriptorBuilder::begin(_vk.device(), current_frame().descriptor_pool, _vk.layout_cache)
+					.bind_image(0, image_buffer_info, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+					.build(copy_set);
+
 				// -- immediate
 
 				VkExtent2D copy_pass_extent = _window.vkb_swapchain.extent;
@@ -1419,7 +1380,7 @@ namespace zebra {
 				auto blit_material = get_material("blit");
 
 				vkCmdBindPipeline(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline);
-				vkCmdBindDescriptorSets(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline_layout, 0, 1, &current_frame().copy_descriptor, 0, nullptr);
+				vkCmdBindDescriptorSets(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline_layout, 0, 1, &copy_set, 0, nullptr);
 
 				vkCmdDraw(current_frame().buf, 3, 1, 0, 0);
 				vkCmdEndRenderPass(current_frame().buf);
@@ -1462,86 +1423,6 @@ namespace zebra {
 
 	void zCore::update_frame_descriptor_sets(PerFrameData& frame) {
 		vkResetDescriptorPool(_vk.device(), frame.descriptor_pool, 0);
-		VkDescriptorSetAllocateInfo alloc_info = {
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.pNext = nullptr,
-			.descriptorPool = frame.descriptor_pool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &_vk.global_set_layout,
-		};
-
-		vkAllocateDescriptorSets(_vk.device(), &alloc_info, &frame.global_descriptor);
-
-		VkDescriptorSetAllocateInfo object_alloc_info = {
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.pNext = nullptr,
-			.descriptorPool = frame.descriptor_pool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &_vk.object_set_layout,
-		};
-		vkAllocateDescriptorSets(_vk.device(), &object_alloc_info, &frame.object_descriptor);
-
-		VkDescriptorSetAllocateInfo dset_info = {
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.pNext = nullptr,
-			.descriptorPool = frame.descriptor_pool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &_vk.copy_set_layout,
-		};
-
-		vkAllocateDescriptorSets(_vk.device(), &dset_info, &frame.copy_descriptor);
-
-		// this is what actually sets up the link between descriptors (shader variables) and the buffers
-		VkDescriptorBufferInfo scene_info = {
-			.buffer = scene_parameter_buffer.buffer,
-			.offset = 0,
-			.range = sizeof(GPUSceneData),
-		};
-
-		VkDescriptorBufferInfo object_info = {
-			.buffer = frame.object_buffer.buffer,
-			.offset = 0,
-			.range = sizeof(GPUObjectData) * MAX_OBJECTS,
-		};
-
-		VkDescriptorBufferInfo makeup_info = {
-			.buffer = frame.makeup_buffer.buffer,
-			.offset = 0,
-			.range = sizeof(GPUMakeupData) * MAX_OBJECTS,
-		};
-
-		VkWriteDescriptorSet scene_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-			frame.global_descriptor, &scene_info, 0);
-
-		VkWriteDescriptorSet object_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			frame.object_descriptor, &object_info, 0);
-
-		VkWriteDescriptorSet makeup_write = vki::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			frame.object_descriptor, &makeup_info, 1);
-
-		auto set_writes = {
-			scene_write,
-			object_write,
-			makeup_write,
-		};
-
-		vkUpdateDescriptorSets(_vk.device(), (u32)set_writes.size(), set_writes.begin(), 0, nullptr);
-		// -----------------------
-	}
-
-	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset) {
-
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline);
-
-		auto offsets = { scene_buffer_offset };
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 0, 1, &frame.global_descriptor, (u32)offsets.size(), offsets.begin());
-
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 1, 1, &frame.object_descriptor, 0, nullptr);
-
-		if (material->texture_set != VK_NULL_HANDLE) {
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 2, 1, &material->texture_set, 0, nullptr);
-		}
-
 	}
 
 	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh) {
@@ -1550,7 +1431,8 @@ namespace zebra {
 	}
 
 	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
-
+		auto& frame = current_frame();
+		auto frame_idx = current_frame_idx();
 		// -- pushing around data into buffers
 
 		glm::mat4 view = _camera.view();
@@ -1561,7 +1443,7 @@ namespace zebra {
 			.viewproj = projection * view,
 		};
 
-		u32 scene_buffer_offset = pad_uniform_buffer_size(sizeof(scene_parameters)) * current_frame_idx();
+		u32 scene_buffer_offset = pad_uniform_buffer_size(sizeof(scene_parameters)) * frame_idx;
 		scene_parameters.ambient_color = { (sin(_df.global_current_time)+1.f)/2.f,0,(cos(_df.global_current_time))+1.f/2.f,1 };
 		scene_parameters.camera = camera_data;
 		{ // CPUTOGPU -- scene buffer copy
@@ -1572,7 +1454,7 @@ namespace zebra {
 
 		
 		{
-			MappedBuffer<GPUObjectData> object_map{ _vk.allocator, current_frame().object_buffer };
+			MappedBuffer<GPUObjectData> object_map{ _vk.allocator, frame.object_buffer };
 			for (size_t i = 0; i < render_objects.size(); i++) {
 				RenderObject& object = render_objects.data()[i];
 				object_map[i].model_matrix = object.transform;
@@ -1580,7 +1462,7 @@ namespace zebra {
 		}
 
 		{
-			MappedBuffer<GPUMakeupData> makeup_map{ _vk.allocator, current_frame().makeup_buffer };
+			MappedBuffer<GPUMakeupData> makeup_map{ _vk.allocator, frame.makeup_buffer };
 			for (size_t i = 0; i < render_objects.size(); i++) {
 				RenderObject& object = render_objects[i];
 				makeup_map[i].color = object.makeup.color;
@@ -1617,7 +1499,7 @@ namespace zebra {
 		}
 
 		{
-			MappedBuffer<VkDrawIndirectCommand> indirect_map{ _vk.allocator, current_frame().indirect_buffer };
+			MappedBuffer<VkDrawIndirectCommand> indirect_map{ _vk.allocator, frame.indirect_buffer };
 			for (u32 i = 0; i < render_objects.size(); i++) {
 				RenderObject& object = render_objects[i];
 				indirect_map[i].vertexCount = object.mesh->_vertices.size();
@@ -1627,9 +1509,53 @@ namespace zebra {
 			}
 		}
 		// -- actual draw code
+		VkDescriptorBufferInfo scene_info = {
+			.buffer = scene_parameter_buffer.buffer,
+			.offset = 0,
+			.range = sizeof(GPUSceneData),
+		};
+
+		VkDescriptorBufferInfo object_info = {
+			.buffer = frame.object_buffer.buffer,
+			.offset = 0,
+			.range = sizeof(GPUObjectData) * MAX_OBJECTS,
+		};
+
+		VkDescriptorBufferInfo makeup_info = {
+			.buffer = frame.makeup_buffer.buffer,
+			.offset = 0,
+			.range = sizeof(GPUMakeupData) * MAX_OBJECTS,
+		};
+
+		VkDescriptorSet scene_set;
+		DescriptorBuilder::begin(_vk.device(), frame.descriptor_pool, _vk.layout_cache)
+			.bind_buffer(0, scene_info, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT )
+			.build(scene_set);
+
+		VkDescriptorSet object_set;
+		DescriptorBuilder::begin(_vk.device(), frame.descriptor_pool, _vk.layout_cache)
+			.bind_buffer(0, object_info, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
+			.bind_buffer(1, makeup_info, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+			.build(object_set);
+
 
 		for (auto& draw : draws)  {
-			bind_descriptors(cmd, current_frame(), draw.material, scene_buffer_offset);
+
+			Material* material = draw.material;
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline);
+
+			auto offsets = { scene_buffer_offset };
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout,
+				0, 1, &scene_set, (u32)offsets.size(), offsets.begin());
+
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 
+				1, 1, &object_set, 0, nullptr);
+
+			if (material->texture_set != VK_NULL_HANDLE) {
+				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 
+					2, 1, &material->texture_set, 0, nullptr);
+			}
+
 			bind_mesh(cmd, draw.mesh);
 			VkDeviceSize indirect_offset = draw.first * sizeof(VkDrawIndirectCommand);
 			u32 draw_stride = sizeof(VkDrawIndirectCommand);

@@ -16,6 +16,7 @@
 #include "g_types.h"
 #include "g_buffer.h"
 #include "g_camera.h"
+#include "g_descriptorset.h"
 #include "g_mesh.h"
 #include "z_debug.h"
 
@@ -37,9 +38,6 @@ namespace zebra {
 		AllocBuffer indirect_buffer;
 
 		VkDescriptorPool descriptor_pool;
-		VkDescriptorSet global_descriptor;
-		VkDescriptorSet object_descriptor;
-		VkDescriptorSet copy_descriptor;
 	};
 
 	struct UploadContext {
@@ -50,6 +48,7 @@ namespace zebra {
 		VkQueue graphics_queue;
 	};
 	
+
 	struct VulkanNative {
 
 		VkInstance& instance() {
@@ -72,10 +71,7 @@ namespace zebra {
 		Texture depth_texture;
 		VkSampler default_sampler;
 
-		VkDescriptorSetLayout global_set_layout;
-		VkDescriptorSetLayout object_set_layout;
-		VkDescriptorSetLayout texture_set_layout;
-		VkDescriptorSetLayout copy_set_layout;
+		DescriptorLayoutCache layout_cache;
 		VkDescriptorPool descriptor_pool;
 
 

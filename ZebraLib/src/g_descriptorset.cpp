@@ -27,7 +27,17 @@ VkDescriptorSetLayout zebra::DescriptorLayoutCache::create(VkDevice device, FatS
 	}
 }
 
-zebra::DescriptorBuilder& zebra::DescriptorBuilder::begin(VkDevice device, VkDescriptorPool pool, zebra::DescriptorLayoutCache& cache) {
+
+void zebra::DescriptorLayoutCache::destroy_cached(VkDevice device) {
+	for (auto& v : layouts) {
+		if (v.layout == VK_NULL_HANDLE) continue;
+		vkDestroyDescriptorSetLayout(device, v.layout, nullptr);
+	}
+
+	layouts.clear();
+}
+
+zebra::DescriptorBuilder zebra::DescriptorBuilder::begin(VkDevice device, VkDescriptorPool pool, zebra::DescriptorLayoutCache& cache) {
 	zebra::DescriptorBuilder builder{};
 	builder.pool = pool;
 	builder.device = device;
@@ -43,9 +53,21 @@ zebra::DescriptorBuilder& zebra::DescriptorBuilder::bind_buffer(u32 binding, VkD
 		.stageFlags = stage_flags,
 	};
 	auto idx = recipe.binding_count++;
-
 	recipe.bindings[idx] = smol;
 	writes[idx] = vki::write_descriptor_buffer(type, VK_NULL_HANDLE, &buffer_info, binding);
+
+	return *this;
+}
+
+zebra::DescriptorBuilder& zebra::DescriptorBuilder::bind_image(u32 binding, VkDescriptorImageInfo& image_info, VkDescriptorType type, VkShaderStageFlags stage_flags) {
+	SmallLayoutBinding smol = {
+		.binding = binding,
+		.descriptorType = type,
+		.stageFlags = stage_flags,
+	};
+	auto idx = recipe.binding_count++;
+	recipe.bindings[idx] = smol;
+	writes[idx] = vki::write_descriptor_image(type, VK_NULL_HANDLE, &image_info, binding);
 
 	return *this;
 }
@@ -69,6 +91,7 @@ void zebra::DescriptorBuilder::build(VkDescriptorSet& set, VkDescriptorSetLayout
 	vkUpdateDescriptorSets(device, recipe.binding_count, writes.data(), 0, nullptr);
 	// end defer
 }
+
 
 void zebra::DescriptorBuilder::build(VkDescriptorSet& set) {
 	VkDescriptorSetLayout layout;
