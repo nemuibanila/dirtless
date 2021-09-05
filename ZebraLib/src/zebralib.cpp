@@ -439,7 +439,7 @@ namespace zebra {
 			};
 
 			_vk.depth_texture.format = VK_FORMAT_D32_SFLOAT;
-			VkImageCreateInfo depth_image_info = vki::image_create_info(_vk.depth_texture.format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depth_image_extent);
+			VkImageCreateInfo depth_image_info = vki::image_create_info(_vk.depth_texture.format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, depth_image_extent);
 			VmaAllocationCreateInfo depth_image_allocinfo = {
 				.usage = VMA_MEMORY_USAGE_GPU_ONLY,
 				.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1349,11 +1349,33 @@ namespace zebra {
 
 			// copy pass here
 			{
+				VkImageMemoryBarrier depth_image_barrier = {
+					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+					.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+					.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+					.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					.image = _vk.depth_texture.image.image,
+					.subresourceRange = {
+						.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+						.levelCount = VK_REMAINING_MIP_LEVELS,
+						.layerCount = VK_REMAINING_ARRAY_LAYERS,
+					},
+
+				};
+
+				vkCmdPipelineBarrier(current_frame().buf,
+					VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					VK_DEPENDENCY_BY_REGION_BIT,
+					0, nullptr,
+					0, nullptr,
+					1, &depth_image_barrier);
 
 				// -- immediate
 				VkDescriptorImageInfo image_buffer_info;
 				image_buffer_info.sampler = _vk.default_sampler;
-				image_buffer_info.imageView = _vk.screen_texture.view;
+				image_buffer_info.imageView = _vk.depth_texture.view;
 				image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 				VkDescriptorSet copy_set;
