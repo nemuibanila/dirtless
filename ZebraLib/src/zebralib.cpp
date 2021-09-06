@@ -606,105 +606,83 @@ namespace zebra {
 		load_shader_module("../shaders/fullscreen.vert.spv", &fullscreen_vertex);
 
 		PipelineBuilder pipeline_builder;
-		pipeline_builder.set_defaults();
-		pipeline_builder._depth_stencil = vki::depth_stencil_create_info(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
 
-		// mesh color shader
-		pipeline_builder._shader_stages.clear();
-		auto mesh_pipeline_layout_info = vki::pipeline_layout_create_info();
-		VkPushConstantRange push_constant = {
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-			.offset = 0,
-			.size = sizeof(MeshPushConstants),
+
+		std::array push_constants = { 
+			VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants)}
 		};
-		mesh_pipeline_layout_info.pushConstantRangeCount = 1;
-		mesh_pipeline_layout_info.pPushConstantRanges = &push_constant;
+
 
 		// these layouts could come from reflection
 		// GLOBAL
-		VkDescriptorSetLayout global_uniform_set_layout;
-		{
-			FatSetLayout fatset;
-			fatset.bindings[fatset.binding_count++] = { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT };
-			global_uniform_set_layout = _vk.layout_cache.create(_vk.device(), fatset);
-		}
+		FatSetLayout scene_set;
+		scene_set.bindings[scene_set.binding_count++] = { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT };
 
 		// OBJECT
-		VkDescriptorSetLayout object_set_layout;
-		{
-			FatSetLayout fatset;
-			fatset.bindings[fatset.binding_count++] = { 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT };
-			fatset.bindings[fatset.binding_count++] = { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT };
-			object_set_layout = _vk.layout_cache.create(_vk.device(), fatset);
-		}
+		FatSetLayout object_set;
+		object_set.bindings[object_set.binding_count++] = { 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT };
+		object_set.bindings[object_set.binding_count++] = { 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT };
 
 		// TEXTURE
-		VkDescriptorSetLayout texture_set_layout;
-		{
-			FatSetLayout fatset;
-			fatset.bindings[fatset.binding_count++] = { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT };
-			texture_set_layout = _vk.layout_cache.create(_vk.device(), fatset);
-		}
+		FatSetLayout texture_set;
+		texture_set.bindings[texture_set.binding_count++] = { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT };
+		std::array mesh_fat_sets = {
+			scene_set,
+			object_set,
+		};
 
-		auto set_layouts = { global_uniform_set_layout, object_set_layout };
-		mesh_pipeline_layout_info.setLayoutCount = (u32)set_layouts.size();
-		mesh_pipeline_layout_info.pSetLayouts = set_layouts.begin();
+		auto mesh_layout = create_pipeline_layout<DefaultFatSize>(_vk.device(), _vk.layout_cache, std::span(mesh_fat_sets), std::span(push_constants));
 
-		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &mesh_pipeline_layout_info, nullptr, &_mesh_pipeline_layout));
-		pipeline_builder._pipelineLayout = _mesh_pipeline_layout;
-
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
-		);
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, default_lit_frag)
-		);
-
-
+		// mesh color shader
 		auto vertex_description = P3N3C3U2::get_vertex_description();
-		pipeline_builder.set_vertex_format(vertex_description);
+		auto mesh_pipeline = pipeline_builder
+			.set_defaults()
+			.depth(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
+			.set_vertex_format(vertex_description)
+			.set_layout(mesh_layout)
+			.clear_shaders()
+			.add_shader(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
+			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, default_lit_frag)
+			.build_pipeline(_vk.device(), _vk.forward_renderpass);
 
-
-		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.forward_renderpass);
-		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
+		create_material(mesh_pipeline, mesh_layout, "defaultmesh");
 
 		// single texture mesh shader
-		auto stex_pipeline_layout_info = mesh_pipeline_layout_info;
-		auto tex_set_layouts = { global_uniform_set_layout, object_set_layout, texture_set_layout };
-		stex_pipeline_layout_info.setLayoutCount = tex_set_layouts.size();
-		stex_pipeline_layout_info.pSetLayouts = tex_set_layouts.begin();
+		std::array tex_fat_sets = {
+			scene_set,
+			object_set,
+			texture_set,
+		};
 
-		VkPipelineLayout stex_pipe_layout;
-		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &stex_pipeline_layout_info, nullptr, &stex_pipe_layout));
+		std::array<VkPushConstantRange, 0> empty_range = {};
+		auto stex_pipe_layout = create_pipeline_layout<DefaultFatSize>(_vk.device(), _vk.layout_cache, std::span(tex_fat_sets), std::span(empty_range));
 
-		pipeline_builder._shader_stages.clear();
-		pipeline_builder._pipelineLayout = stex_pipe_layout;
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex));
-		pipeline_builder._shader_stages.push_back(
-			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, textured_mesh_shader));
+		// mesh texture shader
+		auto tex_pipeline = pipeline_builder
+			.set_layout(stex_pipe_layout)
+			.clear_shaders()
+			.add_shader(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
+			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, textured_mesh_shader)
+			.build_pipeline(_vk.device(), _vk.forward_renderpass);
 
-		auto tex_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.forward_renderpass);
 		create_material(tex_pipeline, stex_pipe_layout, "texturedmesh");
 
-		// blit pipeline
-		pipeline_builder.no_vertex_format();
-		pipeline_builder._shader_stages.clear();
-		pipeline_builder._shader_stages.push_back(vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, fullscreen_vertex));
-		pipeline_builder._shader_stages.push_back(vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT,
-			blit_fragment));
-		pipeline_builder._depth_stencil = vki::depth_stencil_create_info(false, false, VK_COMPARE_OP_ALWAYS);
+		std::array blit_fat_sets = {
+			texture_set,
+		};
 
-		auto blit_pipeline_layout_info = vki::pipeline_layout_create_info();
-		blit_pipeline_layout_info.setLayoutCount = 1;
-		blit_pipeline_layout_info.pSetLayouts = &texture_set_layout;
-		VkPipelineLayout blit_pipe_layout;
-		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &blit_pipeline_layout_info, nullptr, &blit_pipe_layout));
+		VkPipelineLayout blit_pipe_layout = create_pipeline_layout<DefaultFatSize>(_vk.device(), _vk.layout_cache, std::span(blit_fat_sets), std::span(empty_range));
+		
+		// fullscreen blit
+		auto blit_pipeline = pipeline_builder
+			.no_vertex_format()
+			.depth(false, false, VK_COMPARE_OP_ALWAYS)
+			.clear_shaders()
+			.add_shader(VK_SHADER_STAGE_VERTEX_BIT, fullscreen_vertex)
+			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, blit_fragment)
+			.set_layout(blit_pipe_layout)
+			.build_pipeline(_vk.device(), _vk.copy_pass);
 
-		pipeline_builder._pipelineLayout = blit_pipe_layout;
-
-
-		auto blit_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.copy_pass);
 		create_material(blit_pipeline, blit_pipe_layout, "blit");
 
 		//cleanup
@@ -716,8 +694,8 @@ namespace zebra {
 		main_delq.push_function([=]() {
 			vkDestroyPipelineLayout(_vk.device(), stex_pipe_layout, nullptr);
 			vkDestroyPipeline(_vk.device(), tex_pipeline, nullptr);
-			vkDestroyPipelineLayout(_vk.device(), _mesh_pipeline_layout, nullptr);
-			vkDestroyPipeline(_vk.device(), _mesh_pipeline, nullptr);
+			vkDestroyPipelineLayout(_vk.device(), mesh_layout, nullptr);
+			vkDestroyPipeline(_vk.device(), mesh_pipeline, nullptr);
 			vkDestroyPipelineLayout(_vk.device(), blit_pipe_layout, nullptr);
 			vkDestroyPipeline(_vk.device(), blit_pipeline, nullptr);
 			});

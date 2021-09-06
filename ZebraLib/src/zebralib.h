@@ -176,7 +176,7 @@ namespace zebra {
 
 	
 	template< u32 BufferSize = DefaultFatSize >
-	VkPipelineLayout create_pipeline_layout(VkDevice device, DescriptorLayoutCache& cache, std::span<FatSetLayout<BufferSize>> sets, std::span<VkPushConstantRange> ranges) {
+	VkPipelineLayout create_pipeline_layout(VkDevice device, DescriptorLayoutCache& cache, std::span<FatSetLayout<BufferSize>, std::dynamic_extent> sets, std::span<VkPushConstantRange, std::dynamic_extent> ranges) {
 		auto pipeline_layout_create_info = vki::pipeline_layout_create_info();
 		VkDescriptorSetLayout layouts[BufferSize];
 
@@ -274,9 +274,6 @@ namespace zebra {
 		bool advance_frame();
 		PerFrameData& current_frame();
 		u32 current_frame_idx();
-
-		VkPipelineLayout _mesh_pipeline_layout;
-		VkPipeline _mesh_pipeline;
 
 		GPUSceneData scene_parameters;
 		AllocBuffer scene_parameter_buffer;

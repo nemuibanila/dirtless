@@ -95,4 +95,10 @@ namespace zebra {
 		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = nullptr;
 		return pipeline_builder;
 	}
+
+	PipelineBuilder& PipelineBuilder::add_shader(VkShaderStageFlagBits stage, VkShaderModule shader) {
+		auto& pipeline_builder = *this;
+		pipeline_builder._shader_stages.push_back(vki::pipeline_shader_stage_create_info(stage, shader));
+		return pipeline_builder;
+	}
 }
