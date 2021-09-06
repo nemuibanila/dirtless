@@ -81,9 +81,6 @@ namespace zebra {
 		void build(VkDescriptorSet& set);
 		void build(VkDescriptorSet& set, VkDescriptorSetLayout& layout);
 
-
-		// CONTINUE HERE, bob the builder
-
 	protected: 
 		DescriptorBuilder() = default;
 		VkDevice device;

@@ -175,6 +175,26 @@ namespace zebra {
 	constexpr float TICK_DT = 1.f / 100.f;
 
 	
+	template< u32 BufferSize = DefaultFatSize >
+	VkPipelineLayout create_pipeline_layout(VkDevice device, DescriptorLayoutCache& cache, std::span<FatSetLayout<BufferSize>> sets, std::span<VkPushConstantRange> ranges) {
+		auto pipeline_layout_create_info = vki::pipeline_layout_create_info();
+		VkDescriptorSetLayout layouts[BufferSize];
+
+		for (auto i = 0u; i < sets.size(); i++) {
+			layouts[i] = cache.create(device, sets[i]);
+		}
+
+		pipeline_layout_create_info.pushConstantRangeCount = ranges.size();
+		pipeline_layout_create_info.pPushConstantRanges = ranges.data();
+
+		pipeline_layout_create_info.setLayoutCount = sets.size();
+		pipeline_layout_create_info.pSetLayouts = layouts;
+
+		VkPipelineLayout layout;
+		VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_create_info, nullptr, &layout));
+
+		return layout;
+	};
 	void vk_immediate(UploadContext& up, std::function<void(VkCommandBuffer cmd)>&& function);
 	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset);
 	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh);

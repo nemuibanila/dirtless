@@ -605,30 +605,8 @@ namespace zebra {
 		load_shader_module("../shaders/blit.frag.spv", &blit_fragment);
 		load_shader_module("../shaders/fullscreen.vert.spv", &fullscreen_vertex);
 
-
-
-		VkPipelineLayoutCreateInfo pipeline_layout_info = vki::pipeline_layout_create_info();
 		PipelineBuilder pipeline_builder;
-
-		pipeline_builder._vertex_input_info = vki::vertex_input_state_create_info();
-		pipeline_builder._input_assembly = vki::input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-		pipeline_builder._viewport = {
-			.x = 0.0f,
-			.y = 0.0f,
-			.width = (float)_window.vkb_swapchain.extent.width,
-			.height = (float)_window.vkb_swapchain.extent.height,
-			.minDepth = 0.0f,
-			.maxDepth = 1.0f,
-		};
-
-		pipeline_builder._scissor = {
-			.offset = { 0, 0 },
-			.extent = _window.vkb_swapchain.extent,
-		};
-
-		pipeline_builder._rasterizer = vki::rasterization_state_create_info(VK_POLYGON_MODE_FILL);
-		pipeline_builder._multisampling = vki::multisampling_state_create_info();
-		pipeline_builder._color_blend_attachment = vki::color_blend_attachment_state();
+		pipeline_builder.set_defaults();
 		pipeline_builder._depth_stencil = vki::depth_stencil_create_info(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
 
 		// mesh color shader
@@ -673,6 +651,7 @@ namespace zebra {
 		mesh_pipeline_layout_info.pSetLayouts = set_layouts.begin();
 
 		VK_CHECK(vkCreatePipelineLayout(_vk.device(), &mesh_pipeline_layout_info, nullptr, &_mesh_pipeline_layout));
+		pipeline_builder._pipelineLayout = _mesh_pipeline_layout;
 
 		pipeline_builder._shader_stages.push_back(
 			vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
@@ -683,11 +662,8 @@ namespace zebra {
 
 
 		auto vertex_description = P3N3C3U2::get_vertex_description();
-		pipeline_builder._vertex_input_info.vertexAttributeDescriptionCount = (u32)vertex_description.attributes.size();
-		pipeline_builder._vertex_input_info.pVertexAttributeDescriptions = vertex_description.attributes.data();
-		pipeline_builder._vertex_input_info.vertexBindingDescriptionCount = (u32)vertex_description.bindings.size();
-		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = vertex_description.bindings.data();
-		pipeline_builder._pipelineLayout = _mesh_pipeline_layout;
+		pipeline_builder.set_vertex_format(vertex_description);
+
 
 		_mesh_pipeline = pipeline_builder.build_pipeline(_vk.device(), _vk.forward_renderpass);
 		create_material(_mesh_pipeline, _mesh_pipeline_layout, "defaultmesh");
@@ -712,10 +688,7 @@ namespace zebra {
 		create_material(tex_pipeline, stex_pipe_layout, "texturedmesh");
 
 		// blit pipeline
-		pipeline_builder._vertex_input_info.vertexAttributeDescriptionCount = 0;
-		pipeline_builder._vertex_input_info.pVertexAttributeDescriptions = nullptr;
-		pipeline_builder._vertex_input_info.vertexBindingDescriptionCount = 0;
-		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = nullptr;
+		pipeline_builder.no_vertex_format();
 		pipeline_builder._shader_stages.clear();
 		pipeline_builder._shader_stages.push_back(vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, fullscreen_vertex));
 		pipeline_builder._shader_stages.push_back(vki::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1375,7 +1348,7 @@ namespace zebra {
 				// -- immediate
 				VkDescriptorImageInfo image_buffer_info;
 				image_buffer_info.sampler = _vk.default_sampler;
-				image_buffer_info.imageView = _vk.depth_texture.view;
+				image_buffer_info.imageView = _vk.screen_texture.view;
 				image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 				VkDescriptorSet copy_set;

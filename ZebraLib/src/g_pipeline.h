@@ -2,6 +2,7 @@
 #include <vector>
 
 #include <vulkan/vulkan.h>
+#include "g_types.h"
 
 namespace zebra {
 	class PipelineBuilder {
@@ -17,6 +18,9 @@ namespace zebra {
 		VkPipelineMultisampleStateCreateInfo _multisampling;
 		VkPipelineLayout _pipelineLayout;
 
+		PipelineBuilder& set_defaults();
+		PipelineBuilder& set_vertex_format(VertexInputDescription& description);
+		PipelineBuilder& no_vertex_format();
 		VkPipeline build_pipeline(VkDevice device, VkRenderPass pass);
 	};
 }

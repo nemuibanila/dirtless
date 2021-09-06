@@ -1,5 +1,6 @@
 #include "g_pipeline.h"
 #include "zebratypes.h"
+#include "vki.h"
 
 namespace zebra {
 	VkPipeline PipelineBuilder::build_pipeline(VkDevice device, VkRenderPass pass) {
@@ -63,5 +64,35 @@ namespace zebra {
 		} else {
 			return new_pipeline;
 		}
+	}
+	/// @brief Sets up for filled polygons in a triangle list
+	/// @return this
+	PipelineBuilder& PipelineBuilder::set_defaults() {
+		auto& pipeline_builder = *this;
+
+		pipeline_builder._vertex_input_info = vki::vertex_input_state_create_info();
+		pipeline_builder._input_assembly = vki::input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+		pipeline_builder._rasterizer = vki::rasterization_state_create_info(VK_POLYGON_MODE_FILL);
+		pipeline_builder._multisampling = vki::multisampling_state_create_info();
+		pipeline_builder._color_blend_attachment = vki::color_blend_attachment_state();
+		return pipeline_builder;
+	}
+
+	PipelineBuilder& PipelineBuilder::set_vertex_format(VertexInputDescription& description) {
+		auto& pipeline_builder = *this;
+		pipeline_builder._vertex_input_info.vertexAttributeDescriptionCount = (u32)description.attributes.size();
+		pipeline_builder._vertex_input_info.pVertexAttributeDescriptions = description.attributes.data();
+		pipeline_builder._vertex_input_info.vertexBindingDescriptionCount = (u32)description.bindings.size();
+		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = description.bindings.data();
+		return pipeline_builder;
+	}
+
+	PipelineBuilder& PipelineBuilder::no_vertex_format() {
+		auto& pipeline_builder = *this;
+		pipeline_builder._vertex_input_info.vertexAttributeDescriptionCount = 0;
+		pipeline_builder._vertex_input_info.pVertexAttributeDescriptions = nullptr;
+		pipeline_builder._vertex_input_info.vertexBindingDescriptionCount = 0;
+		pipeline_builder._vertex_input_info.pVertexBindingDescriptions = nullptr;
+		return pipeline_builder;
 	}
 }

@@ -17,6 +17,8 @@ namespace zebra {
 	};
 
 	struct VertexInputDescription {
+		// replace this with non dynamic memory
+		// these should be free
 		std::vector<VkVertexInputBindingDescription> bindings;
 		std::vector<VkVertexInputAttributeDescription> attributes;
 		VkPipelineVertexInputStateCreateFlags flags = 0;
