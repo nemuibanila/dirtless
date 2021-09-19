@@ -16,6 +16,15 @@ namespace zebra {
 		VkFormat format;
 	};
 
+	struct UploadContext {
+		VmaAllocator allocator;
+		VkDevice device;
+		VkFence uploadF;
+		VkCommandPool pool;
+		VkQueue graphics_queue;
+	};
+
+
 	struct VertexInputDescription {
 		// replace this with non dynamic memory
 		// these should be free

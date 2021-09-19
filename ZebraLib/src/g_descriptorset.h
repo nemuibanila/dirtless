@@ -4,6 +4,7 @@
 #include "zebratypes.h"
 #include <map>
 #include <array>
+#include <cassert>
 #include <unordered_set>
 
 #include "vki.h"
@@ -55,6 +56,20 @@ namespace zebra {
 				result ^= std::hash<size_t>()(binding_hash);
 			}
 			return result;
+		}
+
+		FatSetLayout& add_binding(VkDescriptorType type, u32 stages) {
+			assert(binding_count < 8);
+
+			auto idx = this->binding_count;
+			this->bindings[idx] = {
+				idx,
+				type,
+				stages,
+			};
+
+			this->binding_count++;
+			return *this;
 		}
 	};
 

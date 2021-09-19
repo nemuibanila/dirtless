@@ -2,11 +2,15 @@
 
 #include <iostream>
 #include "vki.h"
+#include "g_types.h"
+#include "g_buffer.h"
+#include "z_debug.h"
+#include "g_vku.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-bool vku::load_image_from_file(zebra::UploadContext& up, const char* file, zebra::AllocImage& out_image) {
+bool zebra::load_image_from_file(zebra::UploadContext& up, const char* file, zebra::AllocImage& out_image) {
 	int tw, th, tc;
 
 	stbi_uc* pixels = stbi_load(file, &tw, &th, &tc, STBI_rgb_alpha);
@@ -41,7 +45,7 @@ bool vku::load_image_from_file(zebra::UploadContext& up, const char* file, zebra
 	};
 
 	vmaCreateImage(up.allocator, &dimg_info, &dimg_allocinfo, &gpu_image.image, &gpu_image.allocation, nullptr);
-	zebra::vk_immediate(up, [=](VkCommandBuffer cmd) {
+	vku::vk_immediate(up, [=](VkCommandBuffer cmd) {
 		VkImageSubresourceRange range = {
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 			.baseMipLevel = 0,
@@ -95,5 +99,21 @@ bool vku::load_image_from_file(zebra::UploadContext& up, const char* file, zebra
 
 	DBG("Texture loaded sucessfully: " << file);
 	out_image = gpu_image;
+	return true;
+}
+
+bool zebra::create_gpu_texture(zebra::UploadContext& up, VkImageCreateInfo& iinfo, VkImageAspectFlags aspects, zebra::Texture& tex) {
+	VmaAllocationCreateInfo tex_allocinfo = {
+		.usage = VMA_MEMORY_USAGE_GPU_ONLY,
+		.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	};
+
+	tex.format = iinfo.format;
+	auto result = vmaCreateImage(up.allocator, &iinfo, &tex_allocinfo, &tex.image.image, &tex.image.allocation, nullptr);
+	DBG(result);
+	auto view_info = vki::imageview_create_info(iinfo.format, tex.image.image, aspects);
+
+	// TODO: eventually check memory constraints here
+	vkCreateImageView(up.device, &view_info, nullptr, &tex.view);
 	return true;
 }

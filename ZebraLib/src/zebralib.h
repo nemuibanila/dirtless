@@ -40,23 +40,7 @@ namespace zebra {
 		VkDescriptorPool descriptor_pool;
 	};
 
-	struct UploadContext {
-		VmaAllocator allocator;
-		VkDevice device;
-		VkFence uploadF;
-		VkCommandPool pool;
-		VkQueue graphics_queue;
-	};
-	
-
 	struct VulkanNative {
-
-		VkInstance& instance() {
-			return vkb_instance.instance;
-		}
-		VkDevice& device() {
-			return vkb_device.device;
-		}
 		VkQueue graphics_queue;
 		VkRenderPass copy_pass;
 		VkRenderPass forward_renderpass;
@@ -73,8 +57,6 @@ namespace zebra {
 
 		DescriptorLayoutCache layout_cache;
 		VkDescriptorPool descriptor_pool;
-
-
 		VkPhysicalDeviceProperties gpu_properties;
 
 		vkb::Instance vkb_instance;
@@ -195,10 +177,11 @@ namespace zebra {
 
 		return layout;
 	};
-	void vk_immediate(UploadContext& up, std::function<void(VkCommandBuffer cmd)>&& function);
+
+
 	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset);
 	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh);
-	void destroy_texture(UploadContext& up, Texture tex);
+
 
 	class zCore {
 	protected:

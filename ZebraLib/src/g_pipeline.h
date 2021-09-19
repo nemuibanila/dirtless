@@ -3,6 +3,7 @@
 
 #include <vulkan/vulkan.h>
 #include "g_types.h"
+#include "vki.h"
 
 namespace zebra {
 	class PipelineBuilder {

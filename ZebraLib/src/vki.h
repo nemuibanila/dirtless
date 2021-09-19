@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <vulkan/vulkan.h>
+#include "zebratypes.h"
 
 namespace vki {
 	constexpr VkCommandPoolCreateInfo command_pool_create_info(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags flags = 0) {
