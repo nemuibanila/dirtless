@@ -200,12 +200,10 @@ namespace zebra {
 			// grow dynamically eventually
 
 			frame.object_buffer = create_buffer(_vk.allocator, sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-			frame.makeup_buffer = create_buffer(_vk.allocator, sizeof(GPUMakeupData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			frame.indirect_buffer = create_buffer(_vk.allocator, sizeof(VkDrawIndirectCommand) * MAX_COMMANDS, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			frame.camera_buffer = create_buffer(_vk.allocator, sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 			main_delq.push_function([=]() {
-				vmaDestroyBuffer(_vk.allocator, frame.makeup_buffer.buffer, frame.makeup_buffer.allocation);
 				vmaDestroyBuffer(_vk.allocator, frame.object_buffer.buffer, frame.object_buffer.allocation);
 				vmaDestroyBuffer(_vk.allocator, frame.indirect_buffer.buffer, frame.indirect_buffer.allocation);
 				vmaDestroyBuffer(_vk.allocator, frames[i].camera_buffer.buffer, frame.camera_buffer.allocation);
@@ -366,7 +364,6 @@ namespace zebra {
 			forward_info.attachmentCount = attachments.size();
 			forward_info.pAttachments = attachments.begin();
 			VK_CHECK(vkCreateFramebuffer(_up.device, &forward_info, nullptr, &_vk.forward_framebuffer));
-
 		}
 		// final pass to copy to screen
 		const u32 swapchain_imagecount = (u32)_vk.image_views.size();
@@ -403,7 +400,7 @@ namespace zebra {
 
 	void destroy_texture(UploadContext& up, Texture tex) {
 		vkDestroyImageView(up.device, tex.view, nullptr);
-		vmaDestroyImage(up.allocator, tex.image.image, tex.image.allocation);
+		vmaDestroyImage(up.allocator, tex.image, tex.allocation);
 	}
 
 	// ok 02.09.2021 -> touches renderpass
@@ -607,8 +604,7 @@ namespace zebra {
 
 		FatSetLayout object_set;
 		object_set
-			.add_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
-			.add_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+			.add_binding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT);
 
 		// TEXTURE
 		FatSetLayout texture_set;
@@ -698,7 +694,7 @@ namespace zebra {
 		monkey.mesh = get_mesh("monkey");
 		monkey.material = get_material("defaultmesh");
 		monkey.transform = glm::mat4{ 1.0f };
-		monkey.makeup.color = glm::vec4(1.f);
+		monkey.color = glm::vec4(1.f);
 
 		std::random_device r;
 		std::default_random_engine e1(r());
@@ -734,7 +730,7 @@ namespace zebra {
 					} else {
 						color = glm::vec3(1, x, 0);
 					}
-					tri.makeup.color = glm::vec4(color, 1.f);
+					tri.color = glm::vec4(color, 1.f);
 
 					_renderables.push_back(tri);
 				}
@@ -840,10 +836,10 @@ namespace zebra {
 
 		for (auto i = 0u; i < frames.size(); i++) {
 			std::vector<VkDescriptorPoolSize> sizes = {
-				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10},
-				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 10},
-				{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
-				{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10},
+				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+				{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+				{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
 			};
 			VkDescriptorPoolCreateInfo pool_info = {
 				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -1197,17 +1193,18 @@ namespace zebra {
 
 		if (acquire_result == VK_SUCCESS) {
 			// we have an image to render to
+
+			// ------ acquire frame
 			VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
 			VkCommandBufferBeginInfo cmd_begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-
-			update_frame_descriptor_sets(current_frame());
-
+			VK_CHECK(vkResetDescriptorPool(_up.device, current_frame().descriptor_pool, 0));
 			VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
+			// ------ acquire frame end
+
 
 			// forward pass
 			{
 				VkClearValue clear_value;
-				float flash = (float)abs(sin(_df.global_current_time));
 				clear_value.color = { {0.2f, 0.2f, 1.f, 1.f} };
 
 				VkClearValue depth_clear;
@@ -1262,7 +1259,7 @@ namespace zebra {
 					.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
 					.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 					.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-					.image = _vk.depth_texture.image.image,
+					.image = _vk.depth_texture.image,
 					.subresourceRange = {
 						.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
 						.levelCount = VK_REMAINING_MIP_LEVELS,
@@ -1350,13 +1347,8 @@ namespace zebra {
 		}
 	}
 
-	void zCore::update_frame_descriptor_sets(PerFrameData& frame) {
-		vkResetDescriptorPool(_up.device, frame.descriptor_pool, 0);
-	}
-
 	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh) {
-		VkDeviceSize offset = 0;
-		vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->_vertex_buffer.buffer, &offset);
+
 	}
 
 	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
@@ -1387,16 +1379,10 @@ namespace zebra {
 			for (size_t i = 0; i < render_objects.size(); i++) {
 				RenderObject& object = render_objects.data()[i];
 				object_map[i].model_matrix = object.transform;
+				object_map[i].color = object.color;
 			}
 		}
 
-		{
-			MappedBuffer<GPUMakeupData> makeup_map{ _vk.allocator, frame.makeup_buffer };
-			for (size_t i = 0; i < render_objects.size(); i++) {
-				RenderObject& object = render_objects[i];
-				makeup_map[i].color = object.makeup.color;
-			}
-		}
 		if (render_objects.empty()) return;
 		assert(render_objects.size() > 0);
 
@@ -1450,12 +1436,6 @@ namespace zebra {
 			.range = sizeof(GPUObjectData) * MAX_OBJECTS,
 		};
 
-		VkDescriptorBufferInfo makeup_info = {
-			.buffer = frame.makeup_buffer.buffer,
-			.offset = 0,
-			.range = sizeof(GPUMakeupData) * MAX_OBJECTS,
-		};
-
 		VkDescriptorSet scene_set;
 		DescriptorBuilder::begin(_up.device, frame.descriptor_pool, _vk.layout_cache)
 			.bind_buffer(0, scene_info, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT )
@@ -1464,7 +1444,6 @@ namespace zebra {
 		VkDescriptorSet object_set;
 		DescriptorBuilder::begin(_up.device, frame.descriptor_pool, _vk.layout_cache)
 			.bind_buffer(0, object_info, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
-			.bind_buffer(1, makeup_info, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
 			.build(object_set);
 
 
@@ -1485,7 +1464,9 @@ namespace zebra {
 					2, 1, &material->texture_set, 0, nullptr);
 			}
 
-			bind_mesh(cmd, draw.mesh);
+			VkDeviceSize offset = 0;
+			vkCmdBindVertexBuffers(cmd, 0, 1, &draw.mesh->_vertex_buffer.buffer, &offset);
+
 			VkDeviceSize indirect_offset = draw.first * sizeof(VkDrawIndirectCommand);
 			u32 draw_stride = sizeof(VkDrawIndirectCommand);
 
@@ -1575,8 +1556,8 @@ namespace zebra {
 
 	void zCore::load_images() {
 		Texture lost_empire;
-		load_image_from_file(_up, "../assets/lost_empire-RGBA.png", lost_empire.image);
-		VkImageViewCreateInfo image_info = vki::imageview_create_info(VK_FORMAT_R8G8B8A8_SRGB, lost_empire.image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+		load_image_from_file(_up, "../assets/lost_empire-RGBA.png", lost_empire.image, lost_empire.allocation);
+		VkImageViewCreateInfo image_info = vki::imageview_create_info(VK_FORMAT_R8G8B8A8_SRGB, lost_empire.image,  VK_IMAGE_ASPECT_COLOR_BIT);
 		vkCreateImageView(_up.device, &image_info, nullptr, &lost_empire.view);
 		lost_empire.format = image_info.format;
 		_textures["empire_diffuse"] = lost_empire;

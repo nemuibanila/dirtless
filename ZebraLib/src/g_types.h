@@ -2,18 +2,32 @@
 #include <vk_mem_alloc.h>
 #include <vector>
 #include <glm/glm.hpp>
+#include "g_buffer.h"
 
 namespace zebra {
 
-	struct AllocImage {
-		VkImage image;
-		VmaAllocation allocation;
-	};
-
 	struct Texture {
-		AllocImage image;
+		VmaAllocation allocation;
+		VkImage image;
 		VkImageView view;
 		VkFormat format;
+	};
+
+	struct PerFrameData {
+		// depends on swapchain
+		VkSemaphore presentS, renderS;
+		VkFence renderF;
+
+		VkCommandPool pool;
+		VkCommandBuffer buf;
+
+		// independent of swapchain
+		AllocBuffer camera_buffer;
+		AllocBuffer object_buffer;
+		AllocBuffer makeup_buffer;
+		AllocBuffer indirect_buffer;
+
+		VkDescriptorPool descriptor_pool;
 	};
 
 	struct UploadContext {
@@ -143,10 +157,6 @@ namespace zebra {
 		glm::vec4 sunlight_direction;
 		glm::vec4 sunlight_color;
 		GPUCameraData camera;
-	};
-
-	struct GPUMakeupData {
-		glm::vec4 color;
 	};
 
 	

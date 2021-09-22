@@ -23,22 +23,7 @@
 
 namespace zebra { 
 
-	struct PerFrameData {
-		// depends on swapchain
-		VkSemaphore presentS, renderS;
-		VkFence renderF;
 
-		VkCommandPool pool;
-		VkCommandBuffer buf;
-
-		// independent of swapchain
-		AllocBuffer camera_buffer;
-		AllocBuffer object_buffer;
-		AllocBuffer makeup_buffer;
-		AllocBuffer indirect_buffer;
-
-		VkDescriptorPool descriptor_pool;
-	};
 
 	struct VulkanNative {
 		VkQueue graphics_queue;
@@ -178,8 +163,6 @@ namespace zebra {
 		return layout;
 	};
 
-
-	void bind_descriptors(VkCommandBuffer cmd, PerFrameData& frame, Material* material, u32 scene_buffer_offset);
 	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh);
 
 
@@ -225,7 +208,6 @@ namespace zebra {
 		void setup_draw();
 		void draw();
 		void draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects);
-		void update_frame_descriptor_sets(PerFrameData& frame);
 		void load_meshes();
 
 

@@ -10,7 +10,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-bool zebra::load_image_from_file(zebra::UploadContext& up, const char* file, zebra::AllocImage& out_image) {
+bool zebra::load_image_from_file(zebra::UploadContext& up, const char* file, VkImage& out_image, VmaAllocation& out_allocation) {
 	int tw, th, tc;
 
 	stbi_uc* pixels = stbi_load(file, &tw, &th, &tc, STBI_rgb_alpha);
@@ -39,12 +39,13 @@ bool zebra::load_image_from_file(zebra::UploadContext& up, const char* file, zeb
 	};
 
 	VkImageCreateInfo dimg_info = vki::image_create_info(image_format, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, image_extent);
-	zebra::AllocImage gpu_image;
+	VkImage gpu_image;
+	VmaAllocation gpu_image_alloc;
 	VmaAllocationCreateInfo dimg_allocinfo = {
 		.usage = VMA_MEMORY_USAGE_GPU_ONLY,
 	};
 
-	vmaCreateImage(up.allocator, &dimg_info, &dimg_allocinfo, &gpu_image.image, &gpu_image.allocation, nullptr);
+	vmaCreateImage(up.allocator, &dimg_info, &dimg_allocinfo, &gpu_image, &gpu_image_alloc, nullptr);
 	vku::vk_immediate(up, [=](VkCommandBuffer cmd) {
 		VkImageSubresourceRange range = {
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -60,7 +61,7 @@ bool zebra::load_image_from_file(zebra::UploadContext& up, const char* file, zeb
 			.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
 			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			.image = gpu_image.image,
+			.image = gpu_image,
 			.subresourceRange = range,
 		};
 
@@ -81,7 +82,7 @@ bool zebra::load_image_from_file(zebra::UploadContext& up, const char* file, zeb
 			.imageExtent = image_extent,
 		};
 
-		vkCmdCopyBufferToImage(cmd, staging_buffer.buffer, gpu_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+		vkCmdCopyBufferToImage(cmd, staging_buffer.buffer, gpu_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
 
 		VkImageMemoryBarrier imageBarrier_toReadable = imageBarrier_toTransfer;
 		imageBarrier_toReadable.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -99,6 +100,7 @@ bool zebra::load_image_from_file(zebra::UploadContext& up, const char* file, zeb
 
 	DBG("Texture loaded sucessfully: " << file);
 	out_image = gpu_image;
+	out_allocation = gpu_image_alloc;
 	return true;
 }
 
@@ -109,9 +111,9 @@ bool zebra::create_gpu_texture(zebra::UploadContext& up, VkImageCreateInfo& iinf
 	};
 
 	tex.format = iinfo.format;
-	auto result = vmaCreateImage(up.allocator, &iinfo, &tex_allocinfo, &tex.image.image, &tex.image.allocation, nullptr);
+	auto result = vmaCreateImage(up.allocator, &iinfo, &tex_allocinfo, &tex.image, &tex.allocation, nullptr);
 	DBG(result);
-	auto view_info = vki::imageview_create_info(iinfo.format, tex.image.image, aspects);
+	auto view_info = vki::imageview_create_info(iinfo.format, tex.image, aspects);
 
 	// TODO: eventually check memory constraints here
 	vkCreateImageView(up.device, &view_info, nullptr, &tex.view);
