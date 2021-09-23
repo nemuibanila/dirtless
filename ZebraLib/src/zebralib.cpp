@@ -1174,7 +1174,7 @@ namespace zebra {
 		auto monitor = glfwGetPrimaryMonitor();
 		auto refresh_rate = glfwGetVideoMode(monitor)->refreshRate;
 		auto dt = 1.f / 100.f;
-		vkResetFences(_up.device, 1, &current_frame().renderF);
+
 
 		uint32_t swapchain_image_idx;
 		auto acquire_result = vkAcquireNextImageKHR(_up.device, _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
@@ -1314,6 +1314,7 @@ namespace zebra {
 				.pSignalSemaphores = &frame.renderS,
 			};
 
+			vkResetFences(_up.device, 1, &current_frame().renderF);
 			VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, frame.renderF));
 			VkPresentInfoKHR present_info = {
 				.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,

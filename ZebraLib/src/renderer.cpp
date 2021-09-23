@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <algorithm>
+#include <functional>
 
 namespace zebra {
 	namespace render {
@@ -49,18 +50,40 @@ namespace zebra {
 			}
 			
 			renderer.used_buffers.clear();
+
+			// dangerous buffers that are used per frame
+			for (auto i = renderer.danger_buffers.begin(); i != renderer.danger_buffers.end();) {
+				if (vkGetFenceStatus(up.device, (*i).fence_usage) == VK_SUCCESS) {
+					renderer.available_buffers.push_back((*i).buffer);
+					i = renderer.danger_buffers.erase(i);
+				} else {
+					i += 1;
+				}
+			}
+			
 		}
 
-		AllocBuffer pop_buffer(Renderer& renderer) {
+		AllocBuffer pop_buffer(Renderer& renderer, bool bJustTake) {
 			AllocBuffer buffer;
 			if (renderer.available_buffers.empty()) {
-				const u32 SINGLE_BUFFER_SIZE = 65536;
 				buffer = create_buffer(renderer.up->allocator, SINGLE_BUFFER_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			} else {
 				buffer = renderer.available_buffers.front();
 				renderer.available_buffers.pop_front();
 			}
-			renderer.used_buffers.push_back({ buffer });
+			if (!bJustTake) {
+				renderer.used_buffers.push_back({ buffer });
+			}
+			return buffer;
+		}
+
+		AllocBuffer pop_hot_buffer(Renderer& renderer, VkFence render_fence) {
+			AllocBuffer buffer;
+			buffer = pop_buffer(renderer, true);
+			DangerBuffer danger;
+			danger.fence_usage = render_fence;
+			danger.buffer = buffer;
+			renderer.danger_buffers.push_back(danger);
 			return buffer;
 		}
 
@@ -73,7 +96,7 @@ namespace zebra {
 			if (!renderer.b_statics_sorted) {
 				std::sort(renderer.t_statics.begin(), renderer.t_statics.end(), [](const RenderObject& a, const RenderObject& b) {
 					return a.material_fk > b.material_fk || a.material_fk == b.material_fk && a.mesh_fk > b.mesh_fk;
-					});
+					}); 
 				renderer.b_statics_sorted = true;
 			}
 		}
@@ -107,7 +130,7 @@ namespace zebra {
 			vkCmdSetScissor(frame.buf, 0, 1, &scissor);
 
 			// -- setup scene
-			auto scene_param_buffer = pop_buffer(renderer);
+			auto scene_param_buffer = pop_hot_buffer(renderer, frame.renderF);
 
 			VkDescriptorBufferInfo sinfo = {
 				.buffer = scene_param_buffer.buffer,
@@ -126,20 +149,29 @@ namespace zebra {
 			}
 
 			//
-			draw_batches(renderer, up, frame, dcache, renderer.t_statics, assets, scene_set);
+			draw_batches(renderer, up, frame, dcache, renderer.t_statics, assets, scene_set, true);
 			draw_batches(renderer, up, frame, dcache, renderer.t_objects, assets, scene_set);
-			
 			// POSTPROCESS PASS
 		}
 
 		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic) {
-			const u64 BATCH_SIZE = 512;
+			const u64 BATCH_SIZE = (SINGLE_BUFFER_SIZE / (sizeof(GPUObjectData) + sizeof(VkDrawIndirectCommand)));
 			const u64 DRAW_OFFSET = BATCH_SIZE * sizeof(GPUObjectData);
-			for (auto ridx = 0u;; ridx += BATCH_SIZE) {
-				auto object_buffer = pop_buffer(renderer);
-				MappedBuffer<GPUObjectData> object_map{ up.allocator, object_buffer };
-				VkDrawIndirectCommand* draw_ptr = (VkDrawIndirectCommand*)(((u8*)object_map.data) + DRAW_OFFSET);
 
+			std::vector<StaticDrawInfo> scratch_draws;
+			scratch_draws.reserve(16);
+
+			for (auto ridx = 0u;; ridx += BATCH_SIZE) {
+				// -- start object buffer
+				auto left = std::min(BATCH_SIZE, object_vector.size() - ridx);
+				auto object_buffer = pop_hot_buffer(renderer, frame.renderF);
+				MappedBuffer<GPUObjectData> object_map{ up.allocator, object_buffer };
+				for (auto i = 0u; i < left; i++) {
+					object_map[i] = object_vector[ridx + i].obj;
+				}
+				// -- end object buffer
+				
+				// -- start descriptor
 				VkDescriptorBufferInfo oinfo = {
 					.buffer = object_buffer.buffer,
 					.offset = 0,
@@ -150,10 +182,11 @@ namespace zebra {
 				DescriptorBuilder::begin(up.device, frame.descriptor_pool, dcache)
 					.bind_buffer(0, oinfo, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
 					.build(object_set);
+				// -- end descriptor
 
-
-				auto left = std::min(BATCH_SIZE, object_vector.size() - ridx);
+				// -- start draw command generator
 				auto batch_id = 0u;
+				VkDrawIndirectCommand* draw_ptr = (VkDrawIndirectCommand*)(((u8*)object_map.data) + DRAW_OFFSET);
 				for (auto draw_i = 0; batch_id < left; draw_i += 1) {
 					auto& prototype = object_vector[ridx + batch_id];
 					auto& material = assets.t_materials[prototype.material_fk];
@@ -168,7 +201,7 @@ namespace zebra {
 
 					do {
 						draw_command.instanceCount += 1;
-						object_map[batch_id] = object_vector[ridx + batch_id].obj;
+
 						batch_id += 1;
 					} while (
 						batch_id < left &&
@@ -188,7 +221,7 @@ namespace zebra {
 					vkCmdBindVertexBuffers(frame.buf, 0, 1, &mesh._vertex_buffer.buffer, &vertex_offset);
 					vkCmdDrawIndirect(frame.buf, object_buffer.buffer, indirect_offset, 1, sizeof(VkDrawIndirectCommand));
 				}
-
+				// -- end draw command generator
 
 
 				if (left < BATCH_SIZE) {

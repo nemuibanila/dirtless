@@ -40,6 +40,11 @@ namespace zebra {
 			AllocBuffer buffer;
 		};
 
+		struct DangerBuffer {
+			VkFence fence_usage;
+			AllocBuffer buffer;
+		};
+
 		struct StaticDrawInfo {
 			Material material;
 			Mesh* mesh;
@@ -48,15 +53,15 @@ namespace zebra {
 
 		struct Renderer {
 			std::vector<RenderObject> t_objects;
-			std::vector<RenderObject> t_statics;
 			std::deque<AllocBuffer> available_buffers;
 			std::deque<UsedBuffer> used_buffers;
+			std::deque<DangerBuffer> danger_buffers;
 
+			std::vector<RenderObject> t_statics;
 			std::vector<AllocBuffer> static_buffers;
 			std::vector<StaticDrawInfo> static_draws;
 
 			UploadContext* up;
-
 			bool b_statics_sorted = false;
 		};
 
@@ -70,7 +75,8 @@ namespace zebra {
 
 		struct SceneParameters {
 		};
-		
+
+		const u32 SINGLE_BUFFER_SIZE = 131072;
 		u64 insert_mesh(Assets& assets, Mesh mesh);
 		u64 insert_material(Assets& assets, Material material);
 		u64 insert_texture(Assets& assets, Texture material);
@@ -81,6 +87,7 @@ namespace zebra {
 		void finish_collect(Renderer& renderer);
 		void render(Renderer& renderer, Assets& assets, PerFrameData& frame, UploadContext& up, GPUSceneData& params, RenderData& rdata);
 		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic = false);
-		AllocBuffer pop_buffer(Renderer& renderer);
+		AllocBuffer pop_buffer(Renderer& renderer, bool bJustTake = false);
+		AllocBuffer pop_hot_buffer(Renderer& renderer, VkFence render_fence);
 	}
 }
