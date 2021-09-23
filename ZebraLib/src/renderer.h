@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include "g_types.h"
 #include "g_mesh.h"
+#include "g_descriptorset.h"
 #include "zebratypes.h"
 #include <deque>
 
@@ -39,19 +40,32 @@ namespace zebra {
 			AllocBuffer buffer;
 		};
 
+		struct StaticDrawInfo {
+			Material material;
+			Mesh* mesh;
+			VkDeviceSize indirect_offset;
+		};
+
 		struct Renderer {
 			std::vector<RenderObject> t_objects;
-			std::vector<RenderObject> sorted_objects;
+			std::vector<RenderObject> t_statics;
 			std::deque<AllocBuffer> available_buffers;
 			std::deque<UsedBuffer> used_buffers;
 
-			UploadContext up;
+			std::vector<AllocBuffer> static_buffers;
+			std::vector<StaticDrawInfo> static_draws;
+
+			UploadContext* up;
+
+			bool b_statics_sorted = false;
 		};
 
 		struct Assets {
 			std::unordered_map<std::string, u64> t_mat_index;
 			std::unordered_map<u64, Material> t_materials;
 			std::unordered_map<u64, Mesh> t_meshes;
+			std::unordered_map<u64, Texture> t_textures;
+			std::unordered_map<std::string, u64> t_names;
 		};
 
 		struct SceneParameters {
@@ -59,11 +73,14 @@ namespace zebra {
 		
 		u64 insert_mesh(Assets& assets, Mesh mesh);
 		u64 insert_material(Assets& assets, Material material);
+		u64 insert_texture(Assets& assets, Texture material);
+		void name_handle(Assets& assets, std::string name, u64 handle);
 
-		void begin_collect(Renderer& renderer);
-		void add_renderable(Renderer& renderer, RenderObject object);
+		void begin_collect(Renderer& renderer, UploadContext& up);
+		void add_renderable(Renderer& renderer, RenderObject object, bool bStatic = false);
 		void finish_collect(Renderer& renderer);
-		void render(Renderer& renderer, Assets& assets, GPUSceneData& params);
+		void render(Renderer& renderer, Assets& assets, PerFrameData& frame, UploadContext& up, GPUSceneData& params, RenderData& rdata);
+		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic = false);
 		AllocBuffer pop_buffer(Renderer& renderer);
 	}
 }

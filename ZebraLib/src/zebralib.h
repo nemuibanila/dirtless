@@ -18,6 +18,7 @@
 #include "g_camera.h"
 #include "g_descriptorset.h"
 #include "g_mesh.h"
+#include "renderer.h"
 #include "z_debug.h"
 
 
@@ -200,6 +201,7 @@ namespace zebra {
 		void init_upload_context();
 		void init_scene();
 		void init_imgui();
+		void init_renderer();
 		void load_images();
 		bool recreate_swapchain();
 		bool create_window();
@@ -207,7 +209,6 @@ namespace zebra {
 		void app_loop();
 		void setup_draw();
 		void draw();
-		void draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects);
 		void load_meshes();
 
 
@@ -223,6 +224,9 @@ namespace zebra {
 		UploadContext _up;
 		DrawFrameInfo _df;
 		Window _window;
+		render::Assets assets;
+		render::Renderer renderer;
+
 		std::array<PerFrameData, FRAME_OVERLAP> frames;
 		size_t frame_counter = 0;
 
@@ -230,23 +234,12 @@ namespace zebra {
 		// -- rendering
 		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
 		void upload_mesh(Mesh& mesh);
-		Material* create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name);
-		Material* get_material(const std::string& name);
-		Mesh* get_mesh(const std::string& name);
 
 		size_t pad_uniform_buffer_size(size_t original_size);
 
 		bool advance_frame();
 		PerFrameData& current_frame();
 		u32 current_frame_idx();
-
-		GPUSceneData scene_parameters;
-		AllocBuffer scene_parameter_buffer;
-
-		std::vector<RenderObject> _renderables;
-		std::unordered_map<std::string, Material> _materials;
-		std::unordered_map<std::string, Mesh> _meshes;
-		std::unordered_map<std::string, Texture> _textures;
 
 		FirstPersonPerspectiveCamera _camera;
 		float speed = 12.f;

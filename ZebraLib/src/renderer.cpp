@@ -19,13 +19,29 @@ namespace zebra {
 			assets.t_materials[k] = material;
 			return k;
 		}
+
+		u64 insert_texture(Assets& assets, Texture texture) {
+			auto k = genkey();
+			assets.t_textures[k] = texture;
+			return k;
+		}
+
+		void name_handle(Assets& assets, std::string name, u64 handle) {
+			assets.t_names[name] = handle;
+		}
 		
-		void add_renderable(Renderer& renderer, RenderObject object) {
-			renderer.t_objects.push_back(object);
+		void add_renderable(Renderer& renderer, RenderObject object, bool bStatic) {
+			if (bStatic) {
+				renderer.t_statics.push_back(object);
+				renderer.b_statics_sorted = false;
+			} else {
+				renderer.t_objects.push_back(object);
+			}
 		}
 
 		void begin_collect(Renderer& renderer, UploadContext& up) {
-			renderer.t_objects.clear();
+			renderer.t_objects.resize(0);
+			renderer.up = &up;
 
 			// wait for unused?
 			for (auto& buffer : renderer.used_buffers) {
@@ -39,7 +55,7 @@ namespace zebra {
 			AllocBuffer buffer;
 			if (renderer.available_buffers.empty()) {
 				const u32 SINGLE_BUFFER_SIZE = 65536;
-				buffer = create_buffer(renderer.up.allocator, SINGLE_BUFFER_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+				buffer = create_buffer(renderer.up->allocator, SINGLE_BUFFER_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 			} else {
 				buffer = renderer.available_buffers.front();
 				renderer.available_buffers.pop_front();
@@ -50,19 +66,15 @@ namespace zebra {
 
 		void finish_collect(Renderer& renderer) {
 			// frustrum culling
-			for (auto& obj : renderer.t_objects) {
-				if (obj.cull.center.x < 0) {
+			std::sort(renderer.t_objects.begin(), renderer.t_objects.end(), [](const RenderObject& a, const RenderObject& b) {
+				return a.material_fk > b.material_fk || a.material_fk == b.material_fk && a.mesh_fk > b.mesh_fk;
+				});
 
-					// sorted insert
-					renderer.sorted_objects.insert(
-						std::upper_bound(
-						renderer.sorted_objects.begin(),
-						renderer.sorted_objects.end(),
-						obj, [](RenderObject& a, RenderObject& b) {
-							return a.material_fk < b.material_fk ||
-								(a.mesh_fk < b.mesh_fk && a.material_fk == b.material_fk);
-						}), obj);
-				}
+			if (!renderer.b_statics_sorted) {
+				std::sort(renderer.t_statics.begin(), renderer.t_statics.end(), [](const RenderObject& a, const RenderObject& b) {
+					return a.material_fk > b.material_fk || a.material_fk == b.material_fk && a.mesh_fk > b.mesh_fk;
+					});
+				renderer.b_statics_sorted = true;
 			}
 		}
 
@@ -108,11 +120,20 @@ namespace zebra {
 				.bind_buffer(0, sinfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
 				.build(scene_set);
 
+			{ // CPUTOGPU -- scene buffer copy
+				MappedBuffer<GPUSceneData> scene_map{ up.allocator, scene_param_buffer };
+				*scene_map.data = params;
+			}
 
 			//
+			draw_batches(renderer, up, frame, dcache, renderer.t_statics, assets, scene_set);
+			draw_batches(renderer, up, frame, dcache, renderer.t_objects, assets, scene_set);
+			
+			// POSTPROCESS PASS
+		}
 
-
-			const u64 BATCH_SIZE = 256;
+		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic) {
+			const u64 BATCH_SIZE = 512;
 			const u64 DRAW_OFFSET = BATCH_SIZE * sizeof(GPUObjectData);
 			for (auto ridx = 0u;; ridx += BATCH_SIZE) {
 				auto object_buffer = pop_buffer(renderer);
@@ -131,33 +152,30 @@ namespace zebra {
 					.build(object_set);
 
 
-				auto left = std::min(BATCH_SIZE, renderer.sorted_objects.size() - ridx);
-				auto draw_i = 0ull;
-
-				for (auto batch_id = 0; batch_id < left; batch_id++) {
-					auto& prototype = renderer.sorted_objects[ridx + batch_id];
+				auto left = std::min(BATCH_SIZE, object_vector.size() - ridx);
+				auto batch_id = 0u;
+				for (auto draw_i = 0; batch_id < left; draw_i += 1) {
+					auto& prototype = object_vector[ridx + batch_id];
 					auto& material = assets.t_materials[prototype.material_fk];
 					auto& mesh = assets.t_meshes[prototype.mesh_fk];
-					auto draw_count = 0ull;
 
-					draw_ptr[draw_i].firstInstance = batch_id;
-					draw_ptr[draw_i].instanceCount = 0;
-					draw_ptr[draw_i].firstVertex = 0;
-					draw_ptr[draw_i].vertexCount = assets.t_meshes[renderer.sorted_objects[ridx + batch_id].mesh_fk]._vertices.size();
+					VkDrawIndirectCommand draw_command = {
+						.vertexCount = (u32)assets.t_meshes[object_vector[ridx + batch_id].mesh_fk]._vertices.size(),
+						.instanceCount = 0,
+						.firstVertex = 0,
+						.firstInstance = batch_id,
+					};
 
-
-					while (renderer.sorted_objects[ridx + batch_id].mesh_fk == prototype.mesh_fk && renderer.sorted_objects[ridx + batch_id].material_fk == prototype.material_fk) {
-						draw_ptr[draw_i].instanceCount += 1;
-						object_map[batch_id] = renderer.sorted_objects[ridx + batch_id].obj;
+					do {
+						draw_command.instanceCount += 1;
+						object_map[batch_id] = object_vector[ridx + batch_id].obj;
 						batch_id += 1;
-						draw_count += 1;
+					} while (
+						batch_id < left &&
+						object_vector[ridx + batch_id].mesh_fk == prototype.mesh_fk &&
+						object_vector[ridx + batch_id].material_fk == prototype.material_fk);
 
-						if (batch_id > left) {
-							break;
-						}
-					}
-
-					
+					draw_ptr[draw_i] = draw_command;
 					vkCmdBindPipeline(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, material.pipeline);
 					vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, material.pipeline_layout, 0, 1, &scene_set, 0, nullptr);
 					vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, material.pipeline_layout, 1, 1, &object_set, 0, nullptr);
@@ -168,8 +186,7 @@ namespace zebra {
 					VkDeviceSize vertex_offset = 0;
 					VkDeviceSize indirect_offset = DRAW_OFFSET + draw_i * sizeof(VkDrawIndirectCommand);
 					vkCmdBindVertexBuffers(frame.buf, 0, 1, &mesh._vertex_buffer.buffer, &vertex_offset);
-					vkCmdDrawIndirect(frame.buf, object_buffer.buffer, indirect_offset, draw_count, sizeof(VkDrawIndirectCommand));
-					draw_i += 1;
+					vkCmdDrawIndirect(frame.buf, object_buffer.buffer, indirect_offset, 1, sizeof(VkDrawIndirectCommand));
 				}
 
 
@@ -178,8 +195,6 @@ namespace zebra {
 					break;
 				}
 			}
-
-			// POSTPROCESS PASS
 		}
 	}
 }

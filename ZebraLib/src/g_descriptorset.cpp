@@ -2,6 +2,7 @@
 #include <functional>
 #include <vulkan/vulkan.h>
 #include "vki.h"
+#include "z_debug.h"
 
 VkDescriptorSetLayout zebra::DescriptorLayoutCache::create(VkDevice device, FatSetLayout<DefaultFatSize>& layout) {
 	auto it = layouts.find(layout);
@@ -21,7 +22,7 @@ VkDescriptorSetLayout zebra::DescriptorLayoutCache::create(VkDevice device, FatS
 			.pBindings = fat_bindings.data(),
 		};
 
-		vkCreateDescriptorSetLayout(device, &cinfo, nullptr, &layout.layout);
+		VK_CHECK(vkCreateDescriptorSetLayout(device, &cinfo, nullptr, &layout.layout));
 		layouts.emplace(layout);
 		return layout.layout;
 	}
@@ -83,7 +84,7 @@ void zebra::DescriptorBuilder::build(VkDescriptorSet& set, VkDescriptorSetLayout
 		.pSetLayouts = &layout, // data dependency fail
 	};
 
-	vkAllocateDescriptorSets(device, &dinfo, &set);
+	VK_CHECK(vkAllocateDescriptorSets(device, &dinfo, &set));
 	for (auto i = 0u; i < recipe.binding_count; i++) {
 		writes[i].dstSet = set;
 	}

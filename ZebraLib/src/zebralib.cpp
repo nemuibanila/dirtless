@@ -151,6 +151,9 @@ namespace zebra {
 
 		auto sampler_info = vki::sampler_create_info(VK_FILTER_NEAREST);
 		vkCreateSampler(_up.device, &sampler_info, nullptr, &_vk.default_sampler);
+		main_delq.push_function([=] {
+			vkDestroySampler(_up.device, _vk.default_sampler, nullptr);
+			});
 
 		DBG("swapchain");
 		if (!this->init_swapchain()) return false;
@@ -170,6 +173,7 @@ namespace zebra {
 		init_per_frame_data();
 		if (!this->init_pipelines()) return false;
 
+		init_renderer();
 
 		DBG("-- resources");
 		load_images();
@@ -190,25 +194,32 @@ namespace zebra {
 		return true;
 	}
 
-	// OBJECT SYSTEM IN NEED OF REWORK
-	const int MAX_OBJECTS = 640000;
-	const int MAX_COMMANDS = 640000;
+	void zCore::init_renderer() {
+		main_delq.push_function([=] {
+			for (auto& buf : renderer.available_buffers) {
+				vmaDestroyBuffer(_up.allocator, buf.buffer, buf.allocation);
+			}
+			for (auto& buf : renderer.used_buffers) {
+				vmaDestroyBuffer(_up.allocator, buf.buffer.buffer, buf.buffer.allocation);
+			}
+			for (auto& buf : assets.t_meshes) {
+				vmaDestroyBuffer(_up.allocator, buf.second._vertex_buffer.buffer, buf.second._vertex_buffer.allocation);
+			}
+			for (auto& tex : assets.t_textures) {
+				destroy_texture(_up, tex.second);
+			}
+			for (auto& mat : assets.t_materials) {
+				vkDestroyPipelineLayout(_up.device, mat.second.pipeline_layout, nullptr);
+				vkDestroyPipeline(_up.device, mat.second.pipeline, nullptr);
+			}
+
+			});
+	}
+
 	bool zCore::init_per_frame_data() {
-		for (auto i = 0u; i < FRAME_OVERLAP; i++) {
-			auto& frame = frames[i];
-
-			// grow dynamically eventually
-
-			frame.object_buffer = create_buffer(_vk.allocator, sizeof(GPUObjectData) * MAX_OBJECTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-			frame.indirect_buffer = create_buffer(_vk.allocator, sizeof(VkDrawIndirectCommand) * MAX_COMMANDS, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-			frame.camera_buffer = create_buffer(_vk.allocator, sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-			main_delq.push_function([=]() {
-				vmaDestroyBuffer(_vk.allocator, frame.object_buffer.buffer, frame.object_buffer.allocation);
-				vmaDestroyBuffer(_vk.allocator, frame.indirect_buffer.buffer, frame.indirect_buffer.allocation);
-				vmaDestroyBuffer(_vk.allocator, frames[i].camera_buffer.buffer, frame.camera_buffer.allocation);
-				});
-		}
+		//for (auto i = 0u; i < FRAME_OVERLAP; i++) {
+		//	auto& frame = frames[i];
+		//}
 
 
 
@@ -364,6 +375,10 @@ namespace zebra {
 			forward_info.attachmentCount = attachments.size();
 			forward_info.pAttachments = attachments.begin();
 			VK_CHECK(vkCreateFramebuffer(_up.device, &forward_info, nullptr, &_vk.forward_framebuffer));
+			swapchain_delq.push_function([=]() {
+				vkDestroyFramebuffer(_up.device, _vk.forward_framebuffer, nullptr);
+				});
+
 		}
 		// final pass to copy to screen
 		const u32 swapchain_imagecount = (u32)_vk.image_views.size();
@@ -600,7 +615,7 @@ namespace zebra {
 		// GLOBAL
 		FatSetLayout scene_set;
 		scene_set
-			.add_binding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+			.add_binding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
 		FatSetLayout object_set;
 		object_set
@@ -629,7 +644,13 @@ namespace zebra {
 			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, default_lit_frag)
 			.build_pipeline(_up.device, _vk.forward_renderpass);
 
-		create_material(mesh_pipeline, mesh_layout, "defaultmesh");
+		auto defaultmesh_fk = render::insert_material(assets, {
+			.texture_set = VK_NULL_HANDLE,
+			.pipeline = mesh_pipeline,
+			.pipeline_layout = mesh_layout,
+			});
+
+		render::name_handle(assets, "defaultmesh", defaultmesh_fk);
 
 		// single texture mesh shader
 		std::array tex_fat_sets = {
@@ -649,7 +670,8 @@ namespace zebra {
 			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, textured_mesh_shader)
 			.build_pipeline(_up.device, _vk.forward_renderpass);
 
-		create_material(tex_pipeline, stex_pipe_layout, "texturedmesh");
+		auto tmesh_fk = render::insert_material(assets, { VK_NULL_HANDLE, tex_pipeline, stex_pipe_layout });
+		render::name_handle(assets, "texturedmesh", tmesh_fk);
 
 		std::array blit_fat_sets = {
 			texture_set,
@@ -667,7 +689,8 @@ namespace zebra {
 			.set_layout(blit_pipe_layout)
 			.build_pipeline(_up.device, _vk.copy_pass);
 
-		create_material(blit_pipeline, blit_pipe_layout, "blit");
+		auto blit_fk = render::insert_material(assets, { VK_NULL_HANDLE, blit_pipeline, blit_pipe_layout });
+		render::name_handle(assets, "blit", blit_fk);
 
 		//cleanup
 		vkDestroyShaderModule(_up.device, default_lit_frag, nullptr);
@@ -675,14 +698,6 @@ namespace zebra {
 		vkDestroyShaderModule(_up.device, mesh_triangle_vertex, nullptr);
 		vkDestroyShaderModule(_up.device, fullscreen_vertex, nullptr);
 		vkDestroyShaderModule(_up.device, blit_fragment, nullptr);
-		main_delq.push_function([=]() {
-			vkDestroyPipelineLayout(_up.device, stex_pipe_layout, nullptr);
-			vkDestroyPipeline(_up.device, tex_pipeline, nullptr);
-			vkDestroyPipelineLayout(_up.device, mesh_layout, nullptr);
-			vkDestroyPipeline(_up.device, mesh_pipeline, nullptr);
-			vkDestroyPipelineLayout(_up.device, blit_pipe_layout, nullptr);
-			vkDestroyPipeline(_up.device, blit_pipeline, nullptr);
-			});
 
 
 		return true;
@@ -690,30 +705,30 @@ namespace zebra {
 
 	// generify, scene struct
 	void zCore::init_scene() {
-		RenderObject monkey;
-		monkey.mesh = get_mesh("monkey");
-		monkey.material = get_material("defaultmesh");
-		monkey.transform = glm::mat4{ 1.0f };
-		monkey.color = glm::vec4(1.f);
+		render::RenderObject monkey;
+		monkey.mesh_fk = assets.t_names["monkey"];
+		monkey.material_fk = assets.t_names["defaultmesh"];
+		monkey.obj.model_matrix = glm::mat4{ 1.0f };
+		monkey.obj.color = glm::vec4(1.f);
 
 		std::random_device r;
 		std::default_random_engine e1(r());
 		std::uniform_real_distribution<float> frandom(0, 1);
 
-		_renderables.push_back(monkey);
-		for (int x = -50; x <= 50; x++) {
+		add_renderable(renderer, monkey, true);
+		for (int x = -20; x <= 20; x++) {
 			for (int y = -12; y <= 12; y++) {
-				for (int z = -50; z <= 50; z++) {
-					RenderObject tri;
-					tri.mesh = get_mesh("triangle");
-					tri.material = get_material("defaultmesh");
+				for (int z = -200; z <= 20; z++) {
+					render::RenderObject tri;
+					tri.mesh_fk = assets.t_names["triangle"];
+					tri.material_fk = assets.t_names["defaultmesh"];
 
 					float ox = frandom(e1) * 0.5f - 0.25f;
 					float oy = frandom(e1) * 0.5f - 0.25f;
 					float oz = frandom(e1) * 0.5f - 0.25f;
 					glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x + ox, z + oz, y + oy));
 					glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
-					tri.transform = translation * scale;
+					tri.obj.model_matrix = translation * scale;
 					float hue = frandom(e1) * 6;
 					float x = (1.f - glm::abs(glm::mod(hue, 2.f)) - 1.f);
 					glm::vec3 color{};
@@ -730,9 +745,9 @@ namespace zebra {
 					} else {
 						color = glm::vec3(1, x, 0);
 					}
-					tri.color = glm::vec4(color, 1.f);
+					tri.obj.color = glm::vec4(color, 1.f);
 
-					_renderables.push_back(tri);
+					add_renderable(renderer, tri, true);
 				}
 			}
 		}
@@ -743,20 +758,21 @@ namespace zebra {
 
 		VkDescriptorImageInfo image_buffer_info;
 		image_buffer_info.sampler = _vk.default_sampler;
-		image_buffer_info.imageView = _textures["empire_diffuse"].view;
+		image_buffer_info.imageView = assets.t_textures[assets.t_names["empire_diffuse"]].view;
 		image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-		auto textured_mat = get_material("texturedmesh");
+		auto textured_mat = assets.t_names["texturedmesh"];
 		DescriptorBuilder::begin(_up.device, _vk.descriptor_pool, _vk.layout_cache)
 			.bind_image(0, image_buffer_info, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
 			.build(texture_set, texture_set_layout);
-		textured_mat->texture_set = texture_set;
+		assets.t_materials[textured_mat].texture_set = texture_set;
 
-		RenderObject map;
-		map.mesh = get_mesh("empire");
-		map.material = get_material("texturedmesh");
-		map.transform = glm::translate(glm::mat4{ 1.0f }, glm::vec3{ 5, -10, 0 });
-		_renderables.push_back(map);
+		render::RenderObject map;
+		map.mesh_fk = assets.t_names["empire_mesh"];
+		map.material_fk = assets.t_names["texturedmesh"];
+		map.obj.color = glm::vec4(1.f);
+		map.obj.model_matrix = glm::translate(glm::mat4{ 1.0f }, glm::vec3{ 5, -10, 0 });
+		add_renderable(renderer, map, true);
 	}
 
 	// ok 02.09.2021
@@ -827,24 +843,17 @@ namespace zebra {
 	}
 
 	void zCore::init_descriptor_sets() {
-		const size_t sceneParamBufferSize = (FRAME_OVERLAP) * pad_uniform_buffer_size(sizeof(GPUSceneData));
-		scene_parameter_buffer = create_buffer(_vk.allocator, sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		main_delq.push_function([=]() {
-			vmaDestroyBuffer(_vk.allocator, scene_parameter_buffer.buffer, scene_parameter_buffer.allocation);
-			});
-
 
 		for (auto i = 0u; i < frames.size(); i++) {
 			std::vector<VkDescriptorPoolSize> sizes = {
-				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
-				{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+				{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2500},
+				{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2500},
 				{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
 			};
 			VkDescriptorPoolCreateInfo pool_info = {
 				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 				.flags = 0, //VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-				.maxSets = 10,
+				.maxSets = 2500,
 				.poolSizeCount = (u32)sizes.size(),
 				.pPoolSizes = sizes.data(),
 			};
@@ -1106,16 +1115,21 @@ namespace zebra {
 		_monkey_mesh.load_from_obj("../assets/monkey_smooth.obj");
 		upload_mesh(_monkey_mesh);
 
-		_meshes["monkey"] = _monkey_mesh;
-		_meshes["triangle"] = _triangle_mesh;
+
 
 		Mesh lost_empire{};
 		lost_empire.load_from_obj("../assets/lost_empire.obj");
 		upload_mesh(lost_empire);
-		_meshes["empire"] = lost_empire;
+
+		auto monkey_fkey = render::insert_mesh(assets, _monkey_mesh);
+		auto triangle_fkey = render::insert_mesh(assets, _triangle_mesh);
+		auto empire_fkey = render::insert_mesh(assets, lost_empire);
+		render::name_handle(assets, "empire_mesh", empire_fkey);
+		render::name_handle(assets, "triangle", triangle_fkey);
+		render::name_handle(assets, "monkey", monkey_fkey);
 	}
 
-	// move outside
+	// NOT OK
 	void zCore::upload_mesh(Mesh& mesh) {
 		const size_t buffer_size = mesh._vertices.size() * sizeof(mesh._vertices[0]);
 		
@@ -1148,32 +1162,6 @@ namespace zebra {
 
 			vmaDestroyBuffer(_vk.allocator, staging_buffer.buffer, staging_buffer.allocation);
 		}
-
-		main_delq.push_function([=]() {
-			vmaDestroyBuffer(_vk.allocator, mesh._vertex_buffer.buffer, mesh._vertex_buffer.allocation);
-			});
-
-	}
-
-	Material* zCore::create_material(VkPipeline pipeline, VkPipelineLayout layout, const std::string& name) {
-		Material mat{
-			.pipeline = pipeline,
-			.pipeline_layout = layout,
-		};
-		_materials[name] = mat;
-		return &_materials[name];
-	}
-
-	Material* zCore::get_material(const std::string& name) {
-		auto it = _materials.find(name);
-		if (it == _materials.end()) return nullptr;
-		else return &(*it).second;
-	}
-
-	Mesh* zCore::get_mesh(const std::string& name) {
-		auto it = _meshes.find(name);
-		if (it == _meshes.end()) return nullptr;
-		else return &(*it).second;
 	}
 
 	void zCore::setup_draw() {
@@ -1191,56 +1179,53 @@ namespace zebra {
 		uint32_t swapchain_image_idx;
 		auto acquire_result = vkAcquireNextImageKHR(_up.device, _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
 
+		render::begin_collect(renderer, _up);
+		//for (auto& static_obj : static_renderables) {
+		//	render::add_renderable(renderer, static_obj);
+		//}
+
+		render::finish_collect(this->renderer);
+
 		if (acquire_result == VK_SUCCESS) {
 			// we have an image to render to
 
 			// ------ acquire frame
-			VK_CHECK(vkResetCommandBuffer(current_frame().buf, 0));
+			auto& frame = current_frame();
+			VK_CHECK(vkResetCommandBuffer(frame.buf, 0));
 			VkCommandBufferBeginInfo cmd_begin_info = vki::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-			VK_CHECK(vkResetDescriptorPool(_up.device, current_frame().descriptor_pool, 0));
-			VK_CHECK(vkBeginCommandBuffer(current_frame().buf, &cmd_begin_info));
+			VK_CHECK(vkResetDescriptorPool(_up.device, frame.descriptor_pool, 0));
+			VK_CHECK(vkBeginCommandBuffer(frame.buf, &cmd_begin_info));
 			// ------ acquire frame end
 
 
 			// forward pass
 			{
-				VkClearValue clear_value;
-				clear_value.color = { {0.2f, 0.2f, 1.f, 1.f} };
+				// -- pushing around data into buffers
 
-				VkClearValue depth_clear;
-				depth_clear.depthStencil.depth = 1.f;
-
-				auto clear_values = { clear_value, depth_clear };
-
-				VkRenderPassBeginInfo rp_info = vki::renderpass_begin_info(_vk.forward_renderpass, _vk.forward_framebuffer, _window.vkb_swapchain.extent);
-
-				rp_info.clearValueCount = clear_values.size();
-				rp_info.pClearValues = clear_values.begin();
-
-				vkCmdBeginRenderPass(current_frame().buf, &rp_info, VK_SUBPASS_CONTENTS_INLINE);
-
-				// -- dynamic state
-
-				VkViewport viewport = vki::viewport_info(_window.extent());
-
-				vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
-
-				VkRect2D scissor = {
-					.offset = { 0, 0 },
-					.extent = _window.extent(),
+				glm::mat4 view = _camera.view();
+				glm::mat4 projection = _camera.projection();
+				GPUCameraData camera_data = {
+					.view = view,
+					.proj = projection,
+					.viewproj = projection * view,
 				};
 
-				vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
+				GPUSceneData scene_data = {
+					.camera = camera_data,
+				};
 
-				// -- end dynamic state
-
-				// -- camera
-
+				
+				render::RenderData rdata = {
+					.forward_pass = _vk.forward_renderpass,
+					.forward_framebuffer = _vk.forward_framebuffer,
+					.forward_extent = _window.extent(),
+					.dcache = &_vk.layout_cache,
+				};
+				VkViewport viewport = vki::viewport_info(_window.extent());
 				_camera.aspect = viewport.width / viewport.height;
 
-				//
+				render::render(this->renderer, this->assets, frame, this->_up, scene_data, rdata);
 
-				draw_objects(current_frame().buf, std::span<RenderObject>(_renderables.data(), _renderables.size()));
 
 				auto imgui_draw_data = ImGui::GetDrawData();
 				if (imgui_draw_data != nullptr) {
@@ -1283,7 +1268,7 @@ namespace zebra {
 				image_buffer_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 				VkDescriptorSet copy_set;
-				DescriptorBuilder::begin(_up.device, current_frame().descriptor_pool, _vk.layout_cache)
+				DescriptorBuilder::begin(_up.device, frame.descriptor_pool, _vk.layout_cache)
 					.bind_image(0, image_buffer_info, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
 					.build(copy_set);
 
@@ -1299,17 +1284,17 @@ namespace zebra {
 					.extent = _window.extent(),
 				};
 
-				vkCmdSetViewport(current_frame().buf, 0, 1, &viewport);
-				vkCmdSetScissor(current_frame().buf, 0, 1, &scissor);
+				vkCmdSetViewport(frame.buf, 0, 1, &viewport);
+				vkCmdSetScissor(frame.buf, 0, 1, &scissor);
 
-				vkCmdBeginRenderPass(current_frame().buf, &copy_rp_info, VK_SUBPASS_CONTENTS_INLINE);
-				auto blit_material = get_material("blit");
+				vkCmdBeginRenderPass(frame.buf, &copy_rp_info, VK_SUBPASS_CONTENTS_INLINE);
+				auto blit_material = assets.t_materials[assets.t_names["blit"]];
 
-				vkCmdBindPipeline(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline);
-				vkCmdBindDescriptorSets(current_frame().buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material->pipeline_layout, 0, 1, &copy_set, 0, nullptr);
+				vkCmdBindPipeline(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline);
+				vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline_layout, 0, 1, &copy_set, 0, nullptr);
 
-				vkCmdDraw(current_frame().buf, 3, 1, 0, 0);
-				vkCmdEndRenderPass(current_frame().buf);
+				vkCmdDraw(frame.buf, 3, 1, 0, 0);
+				vkCmdEndRenderPass(frame.buf);
 			}
 
 
@@ -1321,15 +1306,15 @@ namespace zebra {
 				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 				.pNext = nullptr,
 				.waitSemaphoreCount = 1,
-				.pWaitSemaphores = &current_frame().presentS,
+				.pWaitSemaphores = &frame.presentS,
 				.pWaitDstStageMask = &wait_stage,
 				.commandBufferCount = 1,
-				.pCommandBuffers = &current_frame().buf,
+				.pCommandBuffers = &frame.buf,
 				.signalSemaphoreCount = 1,
-				.pSignalSemaphores = &current_frame().renderS,
+				.pSignalSemaphores = &frame.renderS,
 			};
 
-			VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, current_frame().renderF));
+			VK_CHECK(vkQueueSubmit(_vk.graphics_queue, 1, &submit_info, frame.renderF));
 			VkPresentInfoKHR present_info = {
 				.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 				.pNext = nullptr,
@@ -1345,135 +1330,6 @@ namespace zebra {
 		} else if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR || acquire_result == VK_SUBOPTIMAL_KHR) {
 			this->recreate_swapchain();
 		}
-	}
-
-	void bind_mesh(VkCommandBuffer cmd, Mesh* mesh) {
-
-	}
-
-	void zCore::draw_objects(VkCommandBuffer cmd, std::span<RenderObject> render_objects) {
-		auto& frame = current_frame();
-		auto frame_idx = current_frame_idx();
-		// -- pushing around data into buffers
-
-		glm::mat4 view = _camera.view();
-		glm::mat4 projection = _camera.projection();
-		GPUCameraData camera_data = {
-			.view = view,
-			.proj = projection,
-			.viewproj = projection * view,
-		};
-
-		u32 scene_buffer_offset = pad_uniform_buffer_size(sizeof(scene_parameters)) * frame_idx;
-		scene_parameters.ambient_color = { (sin(_df.global_current_time)+1.f)/2.f,0,(cos(_df.global_current_time))+1.f/2.f,1 };
-		scene_parameters.camera = camera_data;
-		{ // CPUTOGPU -- scene buffer copy
-			MappedBuffer<char> scene_map{ _vk.allocator, scene_parameter_buffer };
-			auto offset_ptr = scene_map.data + scene_buffer_offset;
-			memcpy(offset_ptr, &scene_parameters, sizeof(scene_parameters));
-		}
-
-		
-		{
-			MappedBuffer<GPUObjectData> object_map{ _vk.allocator, frame.object_buffer };
-			for (size_t i = 0; i < render_objects.size(); i++) {
-				RenderObject& object = render_objects.data()[i];
-				object_map[i].model_matrix = object.transform;
-				object_map[i].color = object.color;
-			}
-		}
-
-		if (render_objects.empty()) return;
-		assert(render_objects.size() > 0);
-
-		// -- prepass
-		std::vector<IndirectBatch> draws;
-		bool first = true;
-		IndirectBatch indirect_draw{
-			.mesh = render_objects[0].mesh,
-			.material = render_objects[0].material,
-			.first = 0,
-			.count = 1,
-		};
-		draws.push_back(indirect_draw);
-
-		for (u32 i = 1; i < render_objects.size(); i++) {
-			if (render_objects[i].material == draws.back().material && render_objects[i].mesh == draws.back().mesh) {
-				// same
-				draws.back().count++;
-			} else {
-				// different
-				IndirectBatch diff_draw{
-					.mesh = render_objects[i].mesh,
-					.material = render_objects[i].material,
-					.first = i,
-					.count = 1,
-				};
-				draws.push_back(diff_draw);
-			}
-		}
-
-		{
-			MappedBuffer<VkDrawIndirectCommand> indirect_map{ _vk.allocator, frame.indirect_buffer };
-			for (u32 i = 0; i < render_objects.size(); i++) {
-				RenderObject& object = render_objects[i];
-				indirect_map[i].vertexCount = object.mesh->_vertices.size();
-				indirect_map[i].instanceCount = 1;
-				indirect_map[i].firstVertex = 0;
-				indirect_map[i].firstInstance = i;
-			}
-		}
-		// -- actual draw code
-		VkDescriptorBufferInfo scene_info = {
-			.buffer = scene_parameter_buffer.buffer,
-			.offset = 0,
-			.range = sizeof(GPUSceneData),
-		};
-
-		VkDescriptorBufferInfo object_info = {
-			.buffer = frame.object_buffer.buffer,
-			.offset = 0,
-			.range = sizeof(GPUObjectData) * MAX_OBJECTS,
-		};
-
-		VkDescriptorSet scene_set;
-		DescriptorBuilder::begin(_up.device, frame.descriptor_pool, _vk.layout_cache)
-			.bind_buffer(0, scene_info, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT )
-			.build(scene_set);
-
-		VkDescriptorSet object_set;
-		DescriptorBuilder::begin(_up.device, frame.descriptor_pool, _vk.layout_cache)
-			.bind_buffer(0, object_info, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
-			.build(object_set);
-
-
-		for (auto& draw : draws)  {
-
-			Material* material = draw.material;
-			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline);
-
-			auto offsets = { scene_buffer_offset };
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout,
-				0, 1, &scene_set, (u32)offsets.size(), offsets.begin());
-
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 
-				1, 1, &object_set, 0, nullptr);
-
-			if (material->texture_set != VK_NULL_HANDLE) {
-				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->pipeline_layout, 
-					2, 1, &material->texture_set, 0, nullptr);
-			}
-
-			VkDeviceSize offset = 0;
-			vkCmdBindVertexBuffers(cmd, 0, 1, &draw.mesh->_vertex_buffer.buffer, &offset);
-
-			VkDeviceSize indirect_offset = draw.first * sizeof(VkDrawIndirectCommand);
-			u32 draw_stride = sizeof(VkDrawIndirectCommand);
-
-			vkCmdDrawIndirect(cmd, current_frame().indirect_buffer.buffer, indirect_offset, draw.count, draw_stride);
-
-		}
-
 	}
 
 	// APP
@@ -1524,6 +1380,7 @@ namespace zebra {
 				ImGui::Text("_gt %f", (float)_df.global_current_time);
 				ImGui::Text("_frameidx %u", current_frame_idx());
 				ImGui::Text("avg frametime %f", avg_ft);
+				ImGui::Text("Number of objects: %u", renderer.t_statics.size() + renderer.t_objects.size());
 				ImGui::SliderFloat("Horizontal speed", &speed, 1.f, 50.f);
 				ImGui::SliderFloat("Vertical speed", &fly_speed, 1.f, 50.f);
 
@@ -1560,6 +1417,8 @@ namespace zebra {
 		VkImageViewCreateInfo image_info = vki::imageview_create_info(VK_FORMAT_R8G8B8A8_SRGB, lost_empire.image,  VK_IMAGE_ASPECT_COLOR_BIT);
 		vkCreateImageView(_up.device, &image_info, nullptr, &lost_empire.view);
 		lost_empire.format = image_info.format;
-		_textures["empire_diffuse"] = lost_empire;
+
+		auto empire_handle = render::insert_texture(assets, lost_empire);
+		render::name_handle(assets, "empire_diffuse", empire_handle);
 	}
 }

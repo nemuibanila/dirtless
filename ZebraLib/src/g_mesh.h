@@ -23,13 +23,6 @@ namespace zebra {
 		bool load_from_obj(const char* file);
 	};
 
-	struct RenderObject {
-		Mesh* mesh;
-		Material* material;
-		glm::vec4 color;
-		glm::mat4 transform;
-	};
-
 	struct GPUObjectData {
 		glm::mat4 model_matrix;
 		glm::vec4 color;
