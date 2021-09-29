@@ -4,7 +4,7 @@
 #include <filesystem>
 
 namespace zebra {
-	bool Mesh::load_from_obj(const char* file) {
+	bool LocalMesh::load_from_obj(const char* file) {
 		tinyobj::attrib_t attrib;
 		std::vector<tinyobj::shape_t> shapes;
 		std::vector<tinyobj::material_t> materials;

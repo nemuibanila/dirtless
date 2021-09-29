@@ -196,14 +196,9 @@ namespace zebra {
 
 	void zCore::init_renderer() {
 		main_delq.push_function([=] {
-			for (auto& buf : renderer.available_buffers) {
-				vmaDestroyBuffer(_up.allocator, buf.buffer, buf.allocation);
-			}
-			for (auto& buf : renderer.used_buffers) {
-				vmaDestroyBuffer(_up.allocator, buf.buffer.buffer, buf.buffer.allocation);
-			}
+			render::clear_buffers(renderer, _up);
 			for (auto& buf : assets.t_meshes) {
-				vmaDestroyBuffer(_up.allocator, buf.second._vertex_buffer.buffer, buf.second._vertex_buffer.allocation);
+				vmaDestroyBuffer(_up.allocator, buf.second.vertices.buffer, buf.second.vertices.allocation);
 			}
 			for (auto& tex : assets.t_textures) {
 				destroy_texture(_up, tex.second);
@@ -1099,53 +1094,58 @@ namespace zebra {
 	}
 
 	void zCore::load_meshes() {
-		_triangle_mesh._vertices.resize(3);
+
+		LocalMesh triangle;
+		triangle._vertices.resize(3);
 		//vertex positions
-		_triangle_mesh._vertices[0].pos = { 1.f, 1.f, 0.0f };
-		_triangle_mesh._vertices[1].pos = {-1.f, 1.f, 0.0f };
-		_triangle_mesh._vertices[2].pos = { 0.f,-1.f, 0.0f };
+		triangle._vertices[0].pos = { 1.f, 1.f, 0.0f };
+		triangle._vertices[1].pos = {-1.f, 1.f, 0.0f };
+		triangle._vertices[2].pos = { 0.f,-1.f, 0.0f };
 
 		//vertex colors, all green
-		_triangle_mesh._vertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
-		_triangle_mesh._vertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
-		_triangle_mesh._vertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
+		triangle._vertices[0].color = { 0.f, 1.f, 0.0f }; //pure green
+		triangle._vertices[1].color = { 0.f, 1.f, 0.0f }; //pure green
+		triangle._vertices[2].color = { 0.f, 1.f, 0.0f }; //pure green
 
-		upload_mesh(_triangle_mesh);
+		auto gpu_triangle = upload_mesh(triangle);
 
-		_monkey_mesh.load_from_obj("../assets/monkey_smooth.obj");
-		upload_mesh(_monkey_mesh);
+		LocalMesh monkey_mesh;
+		monkey_mesh.load_from_obj("../assets/monkey_smooth.obj");
+		auto gpu_monkey = upload_mesh(monkey_mesh);
 
 
 
-		Mesh lost_empire{};
+		LocalMesh lost_empire;
 		lost_empire.load_from_obj("../assets/lost_empire.obj");
-		upload_mesh(lost_empire);
+		auto gpu_empire = upload_mesh(lost_empire);
 
-		auto monkey_fkey = render::insert_mesh(assets, _monkey_mesh);
-		auto triangle_fkey = render::insert_mesh(assets, _triangle_mesh);
-		auto empire_fkey = render::insert_mesh(assets, lost_empire);
+		auto monkey_fkey = render::insert_mesh(assets, gpu_monkey);
+		auto triangle_fkey = render::insert_mesh(assets, gpu_triangle);
+		auto empire_fkey = render::insert_mesh(assets, gpu_empire);
 		render::name_handle(assets, "empire_mesh", empire_fkey);
 		render::name_handle(assets, "triangle", triangle_fkey);
 		render::name_handle(assets, "monkey", monkey_fkey);
 	}
 
 	// NOT OK
-	void zCore::upload_mesh(Mesh& mesh) {
-		const size_t buffer_size = mesh._vertices.size() * sizeof(mesh._vertices[0]);
-		
+	Mesh zCore::upload_mesh(LocalMesh& lmesh) {
+		Mesh mesh;
+		const size_t buffer_size = lmesh._vertices.size() * sizeof(lmesh._vertices[0]);
+		mesh.size = lmesh._vertices.size();
+
 		auto staging_buffer = create_buffer(_vk.allocator, buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
 
 		{
 			MappedBuffer<char> staging_map{ _vk.allocator, staging_buffer };
-			memcpy(staging_map.data, mesh._vertices.data(), buffer_size);
+			memcpy(staging_map.data, lmesh._vertices.data(), buffer_size);
 		}
 
 		if (_vk.allocator->IsIntegratedGpu()) {
 			// we dont need to copy, as cpu and gpu visible memory are usually the same
-			mesh._vertex_buffer = staging_buffer;
+			mesh.vertices = staging_buffer;
 		} else {
 			// need to copy from cpu to gpu
-			mesh._vertex_buffer = create_buffer(_vk.allocator, 
+			mesh.vertices = create_buffer(_vk.allocator, 
 				buffer_size, 
 				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 				VMA_MEMORY_USAGE_GPU_ONLY);
@@ -1157,11 +1157,12 @@ namespace zebra {
 				copy.dstOffset = 0;
 				copy.srcOffset = 0;
 				copy.size = buffer_size;
-				vkCmdCopyBuffer(cmd, staging_buffer.buffer, mesh._vertex_buffer.buffer, 1, &copy);
+				vkCmdCopyBuffer(cmd, staging_buffer.buffer, mesh.vertices.buffer, 1, &copy);
 				});
 
 			vmaDestroyBuffer(_vk.allocator, staging_buffer.buffer, staging_buffer.allocation);
 		}
+		return mesh;
 	}
 
 	void zCore::setup_draw() {

@@ -16,11 +16,14 @@ namespace zebra {
 		glm::mat4 render_matrix;
 	};
 
-	struct Mesh {
+	struct LocalMesh {
 		std::vector<P3N3C3U2> _vertices;
-		AllocBuffer _vertex_buffer;
-
 		bool load_from_obj(const char* file);
+	};
+
+	struct Mesh {
+		size_t size;
+		AllocBuffer vertices;
 	};
 
 	struct GPUObjectData {

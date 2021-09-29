@@ -233,7 +233,7 @@ namespace zebra {
 
 		// -- rendering
 		bool load_shader_module(const char* file_path, VkShaderModule* out_shader);
-		void upload_mesh(Mesh& mesh);
+		Mesh upload_mesh(LocalMesh& mesh);
 
 		size_t pad_uniform_buffer_size(size_t original_size);
 
@@ -244,9 +244,6 @@ namespace zebra {
 		FirstPersonPerspectiveCamera _camera;
 		float speed = 12.f;
 		float fly_speed = 12.f;
-
-		Mesh _triangle_mesh;
-		Mesh _monkey_mesh;
 
 		// -- input 
 		std::map<InputAction, std::function<void()>> action_map;

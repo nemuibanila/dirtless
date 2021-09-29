@@ -154,6 +154,26 @@ namespace zebra {
 			// POSTPROCESS PASS
 		}
 
+		void clear_buffers(zebra::render::Renderer& renderer, zebra::UploadContext& up) {
+			for (auto& buf : renderer.static_buffers) {
+				vmaDestroyBuffer(up.allocator, buf.buffer, buf.allocation);
+
+			}
+			renderer.static_buffers.clear();
+			for (auto& buf : renderer.danger_buffers) {
+				vmaDestroyBuffer(up.allocator, buf.buffer.buffer, buf.buffer.allocation);
+			}
+			renderer.danger_buffers.clear();
+
+			for (auto& buf : renderer.used_buffers) {
+				vmaDestroyBuffer(up.allocator, buf.buffer.buffer, buf.buffer.allocation);
+			}
+			for (auto& buf : renderer.available_buffers) {
+				vmaDestroyBuffer(up.allocator, buf.buffer, buf.allocation);
+			}
+
+		}
+
 		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic) {
 			const u64 BATCH_SIZE = (SINGLE_BUFFER_SIZE / (sizeof(GPUObjectData) + sizeof(VkDrawIndirectCommand)));
 			const u64 DRAW_OFFSET = BATCH_SIZE * sizeof(GPUObjectData);
@@ -161,12 +181,12 @@ namespace zebra {
 			std::vector<StaticDrawInfo> scratch_draws;
 			scratch_draws.reserve(16);
 
-			for (auto ridx = 0u;; ridx += BATCH_SIZE) {
+			for (auto ridx = 0ull;; ridx += BATCH_SIZE) {
 				// -- start object buffer
 				auto left = std::min(BATCH_SIZE, object_vector.size() - ridx);
 				auto object_buffer = pop_hot_buffer(renderer, frame.renderF);
 				MappedBuffer<GPUObjectData> object_map{ up.allocator, object_buffer };
-				for (auto i = 0u; i < left; i++) {
+				for (auto i = 0ull; i < left; i++) {
 					object_map[i] = object_vector[ridx + i].obj;
 				}
 				// -- end object buffer
@@ -187,13 +207,13 @@ namespace zebra {
 				// -- start draw command generator
 				auto batch_id = 0u;
 				VkDrawIndirectCommand* draw_ptr = (VkDrawIndirectCommand*)(((u8*)object_map.data) + DRAW_OFFSET);
-				for (auto draw_i = 0; batch_id < left; draw_i += 1) {
+				for (auto draw_i = 0ull; batch_id < left; draw_i += 1) {
 					auto& prototype = object_vector[ridx + batch_id];
 					auto& material = assets.t_materials[prototype.material_fk];
 					auto& mesh = assets.t_meshes[prototype.mesh_fk];
 
 					VkDrawIndirectCommand draw_command = {
-						.vertexCount = (u32)assets.t_meshes[object_vector[ridx + batch_id].mesh_fk]._vertices.size(),
+						.vertexCount = (u32)assets.t_meshes[object_vector[ridx + batch_id].mesh_fk].size,
 						.instanceCount = 0,
 						.firstVertex = 0,
 						.firstInstance = batch_id,
@@ -201,7 +221,6 @@ namespace zebra {
 
 					do {
 						draw_command.instanceCount += 1;
-
 						batch_id += 1;
 					} while (
 						batch_id < left &&
@@ -218,7 +237,7 @@ namespace zebra {
 
 					VkDeviceSize vertex_offset = 0;
 					VkDeviceSize indirect_offset = DRAW_OFFSET + draw_i * sizeof(VkDrawIndirectCommand);
-					vkCmdBindVertexBuffers(frame.buf, 0, 1, &mesh._vertex_buffer.buffer, &vertex_offset);
+					vkCmdBindVertexBuffers(frame.buf, 0, 1, &mesh.vertices.buffer, &vertex_offset);
 					vkCmdDrawIndirect(frame.buf, object_buffer.buffer, indirect_offset, 1, sizeof(VkDrawIndirectCommand));
 				}
 				// -- end draw command generator

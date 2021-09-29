@@ -87,6 +87,8 @@ namespace zebra {
 		void finish_collect(Renderer& renderer);
 		void render(Renderer& renderer, Assets& assets, PerFrameData& frame, UploadContext& up, GPUSceneData& params, RenderData& rdata);
 		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic = false);
+		void clear_buffers(zebra::render::Renderer& renderer, zebra::UploadContext& up);
+
 		AllocBuffer pop_buffer(Renderer& renderer, bool bJustTake = false);
 		AllocBuffer pop_hot_buffer(Renderer& renderer, VkFence render_fence);
 	}
