@@ -1,4 +1,3 @@
-#pragma warning disable warning-list
 /*
  * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
  * documentation files (the “Software”), to deal in the Software without restriction, including without
@@ -37,8 +36,9 @@ namespace vkb {
 
 namespace detail {
 
-GenericFeaturesPNextNode::GenericFeaturesPNextNode()
-: fields() {} // zero initializes the array of fields
+GenericFeaturesPNextNode::GenericFeaturesPNextNode() {
+	memset(fields, UINT8_MAX, sizeof(VkBool32) * field_capacity);
+}
 
 bool GenericFeaturesPNextNode::match(
     GenericFeaturesPNextNode const& requested, GenericFeaturesPNextNode const& supported) noexcept {
@@ -109,10 +109,14 @@ class VulkanFunctions {
 	}
 
 	void init_pre_instance_funcs() {
-		get_inst_proc_addr(fp_vkEnumerateInstanceExtensionProperties, "vkEnumerateInstanceExtensionProperties");
-		get_inst_proc_addr(fp_vkEnumerateInstanceLayerProperties, "vkEnumerateInstanceLayerProperties");
-		get_inst_proc_addr(fp_vkEnumerateInstanceVersion, "vkEnumerateInstanceVersion");
-		get_inst_proc_addr(fp_vkCreateInstance, "vkCreateInstance");
+		fp_vkEnumerateInstanceExtensionProperties = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+		    ptr_vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties"));
+		fp_vkEnumerateInstanceLayerProperties = reinterpret_cast<PFN_vkEnumerateInstanceLayerProperties>(
+		    ptr_vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceLayerProperties"));
+		fp_vkEnumerateInstanceVersion = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+		    ptr_vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkEnumerateInstanceVersion"));
+		fp_vkCreateInstance = reinterpret_cast<PFN_vkCreateInstance>(
+		    ptr_vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkCreateInstance"));
 	}
 
 	public:
@@ -206,7 +210,7 @@ auto get_vector(std::vector<T>& out, F&& f, Ts&&... ts) -> VkResult {
 	VkResult err;
 	do {
 		err = f(ts..., &count, nullptr);
-		if (err) {
+		if (err != VK_SUCCESS) {
 			return err;
 		};
 		out.resize(count);
@@ -230,13 +234,13 @@ auto get_vector_noerror(F&& f, Ts&&... ts) -> std::vector<T> {
 
 const char* to_string_message_severity(VkDebugUtilsMessageSeverityFlagBitsEXT s) {
 	switch (s) {
-		case VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
 			return "VERBOSE";
-		case VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
 			return "ERROR";
-		case VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
 			return "WARNING";
-		case VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
+		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
 			return "INFO";
 		default:
 			return "UNKNOWN";
@@ -488,7 +492,9 @@ detail::Result<SystemInfo> SystemInfo::get_system_info() {
 
 detail::Result<SystemInfo> SystemInfo::get_system_info(PFN_vkGetInstanceProcAddr fp_vkGetInstanceProcAddr) {
 	// Using externally provided function pointers, assume the loader is available
-	detail::vulkan_functions().init_vulkan_funcs(fp_vkGetInstanceProcAddr);
+	if (!detail::vulkan_functions().init_vulkan_funcs(fp_vkGetInstanceProcAddr)) {
+		return make_error_code(InstanceError::vulkan_unavailable);
+	}
 	return SystemInfo();
 }
 
@@ -551,6 +557,8 @@ void destroy_instance(Instance instance) {
 	}
 }
 
+Instance::operator VkInstance() const { return this->instance; }
+
 InstanceBuilder::InstanceBuilder(PFN_vkGetInstanceProcAddr fp_vkGetInstanceProcAddr) {
 	info.fp_vkGetInstanceProcAddr = fp_vkGetInstanceProcAddr;
 }
@@ -611,6 +619,7 @@ detail::Result<Instance> InstanceBuilder::build() const {
 	}
 	bool supports_properties2_ext = detail::check_extension_supported(
 	    system.available_extensions, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+
 	if (supports_properties2_ext) {
 		extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 	}
@@ -694,9 +703,11 @@ detail::Result<Instance> InstanceBuilder::build() const {
 	VkInstanceCreateInfo instance_create_info = {};
 	instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	detail::setup_pNext_chain(instance_create_info, pNext_chain);
+#if !defined(NDEBUG)
 	for (auto& node : pNext_chain) {
 		assert(node->sType != VK_STRUCTURE_TYPE_APPLICATION_INFO);
 	}
+#endif
 	instance_create_info.flags = info.flags;
 	instance_create_info.pApplicationInfo = &app_info;
 	instance_create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
@@ -744,16 +755,32 @@ InstanceBuilder& InstanceBuilder::set_engine_name(const char* engine_name) {
 	info.engine_name = engine_name;
 	return *this;
 }
+InstanceBuilder& InstanceBuilder::set_app_version(uint32_t app_version) {
+	info.application_version = app_version;
+	return *this;
+}
 InstanceBuilder& InstanceBuilder::set_app_version(uint32_t major, uint32_t minor, uint32_t patch) {
 	info.application_version = VK_MAKE_VERSION(major, minor, patch);
+	return *this;
+}
+InstanceBuilder& InstanceBuilder::set_engine_version(uint32_t engine_version) {
+	info.engine_version = engine_version;
 	return *this;
 }
 InstanceBuilder& InstanceBuilder::set_engine_version(uint32_t major, uint32_t minor, uint32_t patch) {
 	info.engine_version = VK_MAKE_VERSION(major, minor, patch);
 	return *this;
 }
+InstanceBuilder& InstanceBuilder::require_api_version(uint32_t required_api_version) {
+	info.required_api_version = required_api_version;
+	return *this;
+}
 InstanceBuilder& InstanceBuilder::require_api_version(uint32_t major, uint32_t minor, uint32_t patch) {
 	info.required_api_version = VK_MAKE_VERSION(major, minor, patch);
+	return *this;
+}
+InstanceBuilder& InstanceBuilder::desire_api_version(uint32_t preferred_vulkan_version) {
+	info.desired_api_version = preferred_vulkan_version;
 	return *this;
 }
 InstanceBuilder& InstanceBuilder::desire_api_version(uint32_t major, uint32_t minor, uint32_t patch) {
@@ -1014,20 +1041,23 @@ PhysicalDeviceSelector::PhysicalDeviceDesc PhysicalDeviceSelector::populate_devi
 		}
 
 #if defined(VK_API_VERSION_1_1)
-		VkPhysicalDeviceFeatures2 local_features{};
-		local_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-		local_features.pNext = &fill_chain.front();
 		if (instance_info.version >= VK_API_VERSION_1_1 && desc.device_properties.apiVersion >= VK_API_VERSION_1_1) {
+			VkPhysicalDeviceFeatures2 local_features{};
+			local_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+			local_features.pNext = &fill_chain.front();
 			detail::vulkan_functions().fp_vkGetPhysicalDeviceFeatures2(phys_device, &local_features);
 		} else if (instance_info.supports_properties2_ext) {
-			detail::vulkan_functions().fp_vkGetPhysicalDeviceFeatures2KHR(phys_device, &local_features);
+			VkPhysicalDeviceFeatures2KHR local_features_khr{};
+			local_features_khr.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
+			local_features_khr.pNext = &fill_chain.front();
+			detail::vulkan_functions().fp_vkGetPhysicalDeviceFeatures2KHR(phys_device, &local_features_khr);
 		}
 #else
-		VkPhysicalDeviceFeatures2KHR local_features{};
-		local_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-		local_features.pNext = &fill_chain.front();
+		VkPhysicalDeviceFeatures2KHR local_features_khr{};
+		local_features_khr.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
+		local_features_khr.pNext = &fill_chain.front();
 		if (instance_info.supports_properties2_ext) {
-			detail::vulkan_functions().fp_vkGetPhysicalDeviceFeatures2KHR(phys_device, &local_features);
+			detail::vulkan_functions().fp_vkGetPhysicalDeviceFeatures2KHR(phys_device, &local_features_khr);
 		}
 #endif
 		desc.extended_features_chain = fill_chain;
@@ -1112,7 +1142,7 @@ PhysicalDeviceSelector::Suitable PhysicalDeviceSelector::is_device_suitable(Phys
 	bool has_required_memory = false;
 	bool has_preferred_memory = false;
 	for (uint32_t i = 0; i < pd.mem_properties.memoryHeapCount; i++) {
-		if (pd.mem_properties.memoryHeaps[i].flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+		if (pd.mem_properties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
 			if (pd.mem_properties.memoryHeaps[i].size > criteria.required_mem_size) {
 				has_required_memory = true;
 			}
@@ -1141,13 +1171,14 @@ detail::Result<PhysicalDevice> PhysicalDeviceSelector::select() const {
 
 #if !defined(NDEBUG)
 	// Validation
-	for(const auto& node : criteria.extended_features_chain) {
-		assert(node.sType != 0 && "Features struct sType must be filled with the struct's "
-									  "corresponding VkStructureType enum");
+	for (const auto& node : criteria.extended_features_chain) {
+		assert(node.sType != static_cast<VkStructureType>(0) &&
+		       "Features struct sType must be filled with the struct's "
+		       "corresponding VkStructureType enum");
 		assert(
-			node.sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 &&
-			"Do not pass VkPhysicalDeviceFeatures2 as a required extension feature structure. An "
-			"instance of this is managed internally for selection criteria and device creation.");
+		    node.sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 &&
+		    "Do not pass VkPhysicalDeviceFeatures2 as a required extension feature structure. An "
+		    "instance of this is managed internally for selection criteria and device creation.");
 	}
 #endif
 
@@ -1329,6 +1360,8 @@ std::vector<VkQueueFamilyProperties> PhysicalDevice::get_queue_families() const 
 	return queue_families;
 }
 
+PhysicalDevice::operator VkPhysicalDevice() const { return this->physical_device; }
+
 // ---- Queues ---- //
 
 detail::Result<uint32_t> Device::get_queue_index(QueueType type) const {
@@ -1398,6 +1431,8 @@ detail::Result<VkQueue> Device::get_dedicated_queue(QueueType type) const {
 DispatchTable Device::make_table() const { return { device, fp_vkGetDeviceProcAddr }; }
 
 // ---- Device ---- //
+
+Device::operator VkDevice() const { return this->device; }
 
 CustomQueueDescription::CustomQueueDescription(uint32_t index, uint32_t count, std::vector<float> priorities)
 : index(index), count(count), priorities(priorities) {
@@ -1477,10 +1512,11 @@ detail::Result<Device> DeviceBuilder::build() const {
 	}
 
 	detail::setup_pNext_chain(device_create_info, final_pnext_chain);
+#if !defined(NDEBUG)
 	for (auto& node : final_pnext_chain) {
 		assert(node->sType != VK_STRUCTURE_TYPE_APPLICATION_INFO);
 	}
-
+#endif
 	device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	device_create_info.flags = info.flags;
 	device_create_info.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
@@ -1727,9 +1763,11 @@ detail::Result<Swapchain> SwapchainBuilder::build() const {
 	VkSwapchainCreateInfoKHR swapchain_create_info = {};
 	swapchain_create_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 	detail::setup_pNext_chain(swapchain_create_info, info.pNext_chain);
+#if !defined(NDEBUG)
 	for (auto& node : info.pNext_chain) {
 		assert(node->sType != VK_STRUCTURE_TYPE_APPLICATION_INFO);
 	}
+#endif
 	swapchain_create_info.flags = info.create_flags;
 	swapchain_create_info.surface = info.surface;
 	swapchain_create_info.minImageCount = image_count;
@@ -1826,6 +1864,7 @@ void Swapchain::destroy_image_views(std::vector<VkImageView> const& image_views)
 		internal_table.fp_vkDestroyImageView(device, image_view, allocation_callbacks);
 	}
 }
+Swapchain::operator VkSwapchainKHR() const { return this->swapchain; }
 SwapchainBuilder& SwapchainBuilder::set_old_swapchain(VkSwapchainKHR old_swapchain) {
 	info.old_swapchain = old_swapchain;
 	return *this;

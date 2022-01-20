@@ -18,6 +18,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 
 #include <vector>
 #include <system_error>
@@ -119,18 +120,19 @@ template <typename T> class Result {
 
 struct GenericFeaturesPNextNode {
 
+	static const uint32_t field_capacity = 256;
+
 	GenericFeaturesPNextNode();
 
-	template <typename T>
-	GenericFeaturesPNextNode(T const& features) noexcept {
-		*reinterpret_cast<T*>(this) = features;
+	template <typename T> GenericFeaturesPNextNode(T const& features) noexcept {
+		memset(fields, UINT8_MAX, sizeof(VkBool32) * field_capacity);
+		memcpy(this, &features, sizeof(T));
 	}
 
 	static bool match(GenericFeaturesPNextNode const& requested, GenericFeaturesPNextNode const& supported) noexcept;
 
 	VkStructureType sType = static_cast<VkStructureType>(0);
 	void* pNext = nullptr;
-	static const uint32_t field_capacity = 256;
 	VkBool32 fields[field_capacity];
 };
 
@@ -237,6 +239,10 @@ struct Instance {
 	PFN_vkGetInstanceProcAddr fp_vkGetInstanceProcAddr = nullptr;
 	PFN_vkGetDeviceProcAddr fp_vkGetDeviceProcAddr = nullptr;
 
+	// A conversion function which allows this Instance to be used
+	// in places where VkInstance would have been used.
+	operator VkInstance() const;
+
 	private:
 	bool headless = false;
 	bool supports_properties2_ext = false;
@@ -284,12 +290,28 @@ class InstanceBuilder {
 	InstanceBuilder& set_app_name(const char* app_name);
 	// Sets the name of the engine. Defaults to "" if none is provided.
 	InstanceBuilder& set_engine_name(const char* engine_name);
+
+	// Sets the version of the application.
+	// Should be constructed with VK_MAKE_VERSION or VK_MAKE_API_VERSION.
+	InstanceBuilder& set_app_version(uint32_t app_version);
 	// Sets the (major, minor, patch) version of the application.
 	InstanceBuilder& set_app_version(uint32_t major, uint32_t minor, uint32_t patch = 0);
+
+	// Sets the version of the engine.
+	// Should be constructed with VK_MAKE_VERSION or VK_MAKE_API_VERSION.
+	InstanceBuilder& set_engine_version(uint32_t engine_version);
 	// Sets the (major, minor, patch) version of the engine.
 	InstanceBuilder& set_engine_version(uint32_t major, uint32_t minor, uint32_t patch = 0);
+
+	// Require a vulkan instance API version. Will fail to create if this version isn't available.
+	// Should be constructed with VK_MAKE_VERSION or VK_MAKE_API_VERSION.
+	InstanceBuilder& require_api_version(uint32_t required_api_version);
 	// Require a vulkan instance API version. Will fail to create if this version isn't available.
 	InstanceBuilder& require_api_version(uint32_t major, uint32_t minor, uint32_t patch = 0);
+
+	// Prefer a vulkan instance API version. If the desired version isn't available, it will use the highest version available.
+	// Should be constructed with VK_MAKE_VERSION or VK_MAKE_API_VERSION.
+	InstanceBuilder& desire_api_version(uint32_t preferred_vulkan_version);
 	// Prefer a vulkan instance API version. If the desired version isn't available, it will use the highest version available.
 	InstanceBuilder& desire_api_version(uint32_t major, uint32_t minor, uint32_t patch = 0);
 
@@ -349,7 +371,7 @@ class InstanceBuilder {
 		// VkInstanceCreateInfo
 		std::vector<const char*> layers;
 		std::vector<const char*> extensions;
-		VkInstanceCreateFlags flags = 0;
+		VkInstanceCreateFlags flags = static_cast<VkInstanceCreateFlags>(0);
 		std::vector<VkBaseOutStructure*> pNext_elements;
 
 		// debug callback - use the default so it is not nullptr
@@ -412,6 +434,10 @@ struct PhysicalDevice {
 
 	// Advanced: Get the VkQueueFamilyProperties of the device if special queue setup is needed
 	std::vector<VkQueueFamilyProperties> get_queue_families() const;
+
+	// A conversion function which allows this PhysicalDevice to be used
+	// in places where VkPhysicalDevice would have been used.
+	operator VkPhysicalDevice() const;
 
 	private:
 	uint32_t instance_version = VK_MAKE_VERSION(1, 0, 0);
@@ -597,6 +623,10 @@ struct Device {
 	// Return a loaded dispatch table
 	DispatchTable make_table() const;
 
+	// A conversion function which allows this Device to be used
+	// in places where VkDevice would have been used.
+	operator VkDevice() const;
+
 	private:
 	struct {
 		PFN_vkGetDeviceQueue fp_vkGetDeviceQueue = nullptr;
@@ -640,7 +670,7 @@ class DeviceBuilder {
 	private:
 	PhysicalDevice physical_device;
 	struct DeviceInfo {
-		VkDeviceCreateFlags flags = 0;
+		VkDeviceCreateFlags flags = static_cast<VkDeviceCreateFlags>(0);
 		std::vector<VkBaseOutStructure*> pNext_chain;
 		std::vector<CustomQueueDescription> queue_descriptions;
 		VkAllocationCallbacks* allocation_callbacks = VK_NULL_HANDLE;
@@ -663,6 +693,10 @@ struct Swapchain {
 	// VkImageViews must be destroyed.
 	detail::Result<std::vector<VkImageView>> get_image_views();
 	void destroy_image_views(std::vector<VkImageView> const& image_views);
+
+	// A conversion function which allows this Swapchain to be used
+	// in places where VkSwapchainKHR would have been used.
+	operator VkSwapchainKHR() const;
 
 	private:
 	struct {

@@ -1,4 +1,3 @@
-#pragma warning(push, 0)
 /* 
  * Copyright © 2021 Cody Goodson (contact@vibimanx.com)
  * 
@@ -3536,4 +3535,3 @@ private:
 };
 
 } // namespace vkb
-#pragma warning(pop)
