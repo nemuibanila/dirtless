@@ -13,7 +13,7 @@ namespace zebra {
 		union CullSphere {
 			glm::vec4 sphere;
 			struct {
-				glm::vec3 center;
+				float center[3];
 				float radius;
 			};
 		};

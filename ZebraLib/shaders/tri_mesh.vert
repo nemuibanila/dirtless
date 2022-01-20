@@ -20,20 +20,13 @@ layout(set = 0, binding = 0) uniform  SceneData{
 
 struct ObjectData{
 	mat4 model;
-};
-
-struct MakeupData {
 	vec4 color;
 };
 
 //all object matrices
-layout(std140,set = 1, binding = 0) readonly buffer ObjectBuffer{
+layout(set = 1, binding = 0) readonly buffer ObjectBuffer{
 	ObjectData objects[];
 } objectBuffer;
-
-layout(std140, set = 1, binding = 1) readonly buffer MakeupBuffer {
-	MakeupData makeup[];
-} makeupBuffer;
 
 //push constants block
 layout( push_constant ) uniform constants
@@ -44,11 +37,10 @@ layout( push_constant ) uniform constants
 
 void main()
 {
-	mat4 modelMatrix = objectBuffer.objects[gl_BaseInstance].model;
+	mat4 modelMatrix = objectBuffer.objects[gl_InstanceIndex].model;
 	mat4 transformMatrix = (sceneData.viewproj * modelMatrix);
 	gl_Position = transformMatrix * vec4(vPosition, 1.0f);
-	outColor = 0.4f * vColor 
-		+ 0.4f * vColor * makeupBuffer.makeup[gl_BaseInstance].color.xyz 
-		+ 0.2f * makeupBuffer.makeup[gl_BaseInstance].color.xyz;
+	outColor = mix(vColor, objectBuffer.objects[gl_InstanceIndex].color.rgb, 0.5);
+	
 	texCoord = vTexCoord;
 }

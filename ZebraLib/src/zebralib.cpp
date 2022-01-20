@@ -1,22 +1,21 @@
 #include "zebralib.h"
+
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <vector>
 #include <string>
-#include <vk_mem_alloc.h>
 #include <thread>
 #include <chrono>
 #include <random>
-#include <VkBootstrap.h>
 #include <magic_enum.h>
 #include <numeric>
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
+#include "vk_mem_alloc.h"
 #define VMA_IMPLEMENTATION
-#include <vk_mem_alloc.h>
+#include "vk_mem_alloc.h"
+
+#include <VkBootstrap.h>
 
 #include "vki.h"
 #include "g_types.h"
@@ -70,7 +69,7 @@ namespace zebra {
 		};
 
 		KeyInput toggle_absolute{
-			.key = GLFW_KEY_K,
+			.key = {GLFW_KEY_K},
 			.action = InputAction::TOGGLE_ABSOLUTE_MOUSE
 		};
 		this->key_inputs.push_back(toggle_absolute);
@@ -111,14 +110,14 @@ namespace zebra {
 		this->key_inputs.push_back(right);
 
 		KeyInput up{
-			.key = GLFW_KEY_SPACE,
+			.key = Key{GLFW_KEY_SPACE},
 			.condition = KeyCondition::HOLD,
 			.action = InputAction::MOVE_FLY_UP,
 		};
 		key_inputs.push_back(up);
 
 		KeyInput down{
-			.key = GLFW_KEY_C,
+			.key = Key{GLFW_KEY_C},
 			.condition = KeyCondition::HOLD,
 			.action = InputAction::MOVE_FLY_DOWN,
 		};
@@ -151,7 +150,7 @@ namespace zebra {
 
 		auto sampler_info = vki::sampler_create_info(VK_FILTER_NEAREST);
 		vkCreateSampler(_up.device, &sampler_info, nullptr, &_vk.default_sampler);
-		main_delq.push_function([=] {
+		main_delq.push_function([this] {
 			vkDestroySampler(_up.device, _vk.default_sampler, nullptr);
 			});
 
@@ -195,7 +194,7 @@ namespace zebra {
 	}
 
 	void zCore::init_renderer() {
-		main_delq.push_function([=] {
+		main_delq.push_function([this] {
 			render::clear_buffers(renderer, _up);
 			for (auto& buf : assets.t_meshes) {
 				vmaDestroyBuffer(_up.allocator, buf.second.vertices.buffer, buf.second.vertices.allocation);
@@ -250,7 +249,7 @@ namespace zebra {
 			VK_CHECK(vkCreateSemaphore(_up.device, &semaphore_info, nullptr, &frames[i].presentS));
 			VK_CHECK(vkCreateSemaphore(_up.device, &semaphore_info, nullptr, &frames[i].renderS));
 
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this, i]() {
 				vkDestroyCommandPool(_up.device, frames[i].pool, nullptr);
 				vkDestroyFence(_up.device, frames[i].renderF, nullptr);
 				vkDestroySemaphore(_up.device, frames[i].renderS, nullptr);
@@ -311,7 +310,7 @@ namespace zebra {
 			};
 
 			VK_CHECK(vkCreateRenderPass(_up.device, &render_pass_info, nullptr, &_vk.forward_renderpass));
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this]() {
 				vkDestroyRenderPass(_up.device, _vk.forward_renderpass, nullptr);
 				});
 		}
@@ -346,7 +345,7 @@ namespace zebra {
 			};
 
 			VK_CHECK(vkCreateRenderPass(_up.device, &render_pass_info, nullptr, &_vk.copy_pass));
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this]() {
 				vkDestroyRenderPass(_up.device, _vk.copy_pass, nullptr);
 				});
 		}
@@ -370,7 +369,7 @@ namespace zebra {
 			forward_info.attachmentCount = attachments.size();
 			forward_info.pAttachments = attachments.begin();
 			VK_CHECK(vkCreateFramebuffer(_up.device, &forward_info, nullptr, &_vk.forward_framebuffer));
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this]() {
 				vkDestroyFramebuffer(_up.device, _vk.forward_framebuffer, nullptr);
 				});
 
@@ -385,7 +384,7 @@ namespace zebra {
 			final_framebuffer_info.attachmentCount = 1;
 			final_framebuffer_info.pAttachments = &swapchain_imageviews[i];
 			VK_CHECK(vkCreateFramebuffer(_up.device, &final_framebuffer_info, nullptr, &_vk.framebuffers[i]));
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this, i]() {
 				vkDestroyFramebuffer(_up.device, _vk.framebuffers[i], nullptr);
 				});
 		}
@@ -432,7 +431,7 @@ namespace zebra {
 		{
 			_vk.images = _window.vkb_swapchain.get_images().value();
 			_vk.image_views = _window.vkb_swapchain.get_image_views().value();
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this]() {
 				for (auto i = 0u; i < _vk.image_views.size(); i++) {
 					vkDestroyImageView(_up.device, _vk.image_views[i], nullptr);
 				}
@@ -449,7 +448,7 @@ namespace zebra {
 			VkImageCreateInfo depth_image_info = vki::image_create_info(VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, depth_image_extent);
 			create_gpu_texture(_up, depth_image_info, VK_IMAGE_ASPECT_DEPTH_BIT, _vk.depth_texture);
 
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this]() {
 				destroy_texture(_up, _vk.depth_texture);
 				});
 		}
@@ -464,7 +463,7 @@ namespace zebra {
 			auto screen_texture_info = vki::image_create_info(VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, render_image_extent);
 			create_gpu_texture(_up, screen_texture_info, VK_IMAGE_ASPECT_COLOR_BIT, _vk.screen_texture);
 
-			swapchain_delq.push_function([=]() {
+			swapchain_delq.push_function([this]() {
 				destroy_texture(_up, _vk.screen_texture);
 				});
 
@@ -540,6 +539,7 @@ namespace zebra {
 		auto phys_ret = selector
 			.set_surface(_window.surface)
 			.set_minimum_version(1, 2)
+			.add_desired_extension("VK_KHR_shader_draw_parameters")
 			.prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
 			.select();
 		if (!phys_ret) {
@@ -551,7 +551,8 @@ namespace zebra {
 		vkGetPhysicalDeviceFeatures(physical_device.physical_device, &physical_device.features);
 
 		vkb::DeviceBuilder device_builder{ physical_device };
-		auto dev_ret = device_builder.build();
+		auto dev_ret = device_builder
+			.build();
 		if (!dev_ret) {
 			DBG("device err: " << dev_ret.error().message());
 			return false;
@@ -572,7 +573,7 @@ namespace zebra {
 			.instance = _vk.vkb_instance.instance,
 		};
 		vmaCreateAllocator(&allocate_info, &_vk.allocator);
-		main_delq.push_function([=]() {
+		main_delq.push_function([this]() {
 			vmaDestroyAllocator(_vk.allocator);
 			});
 
@@ -623,8 +624,10 @@ namespace zebra {
 		std::array mesh_fat_sets = {
 			scene_set,
 			object_set,
+			texture_set,
 		};
 
+		std::cout << mesh_fat_sets[1].bindings[0].descriptorType;
 		auto mesh_layout = create_pipeline_layout<DefaultFatSize>(_up.device, _vk.layout_cache, std::span(mesh_fat_sets), std::span(push_constants));
 
 		// mesh color shader
@@ -711,9 +714,9 @@ namespace zebra {
 		std::uniform_real_distribution<float> frandom(0, 1);
 
 		add_renderable(renderer, monkey, true);
-		for (int x = -20; x <= 20; x++) {
-			for (int y = -12; y <= 12; y++) {
-				for (int z = -200; z <= 20; z++) {
+		for (float x = -20; x <= 20; x+=1.00001f) {
+			for (float y = -12; y <= 12; y+=1.00001f) {
+				for (float z = -20; z <= 20; z+=1.00001f) {
 					render::RenderObject tri;
 					tri.mesh_fk = assets.t_names["triangle"];
 					tri.material_fk = assets.t_names["defaultmesh"];
@@ -721,8 +724,8 @@ namespace zebra {
 					float ox = frandom(e1) * 0.5f - 0.25f;
 					float oy = frandom(e1) * 0.5f - 0.25f;
 					float oz = frandom(e1) * 0.5f - 0.25f;
-					glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(x + ox, z + oz, y + oy));
-					glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.2, 0.2, 0.2));
+					glm::mat4 translation = glm::translate(glm::mat4{ 1.0 }, glm::vec3(2.0f*x + ox, 2.0f*z + oz, 2.0f*y + oy));
+					glm::mat4 scale = glm::scale(glm::mat4{ 1.0 }, glm::vec3(0.5f, 0.5f, 0.5f));
 					tri.obj.model_matrix = translation * scale;
 					float hue = frandom(e1) * 6;
 					float x = (1.f - glm::abs(glm::mod(hue, 2.f)) - 1.f);
@@ -800,7 +803,7 @@ namespace zebra {
 
 		_up.graphics_queue = _vk.graphics_queue;
 
-		main_delq.push_function([=]() {
+		main_delq.push_function([this]() {
 			vkDestroyFence(_up.device, _up.uploadF, nullptr);
 			vkDestroyCommandPool(_up.device, _up.pool, nullptr);
 			});
@@ -825,14 +828,14 @@ namespace zebra {
 			.pPoolSizes = sizes.data(),
 		};
 		vkCreateDescriptorPool(_up.device, &pool_info, nullptr, &_vk.descriptor_pool);
-		main_delq.push_function([=]() {
+		main_delq.push_function([this]() {
 			vkResetDescriptorPool(_up.device, _vk.descriptor_pool, 0);
 			vkDestroyDescriptorPool(_up.device, _vk.descriptor_pool, nullptr);
 		});
 		
 
 
-		main_delq.push_function([=]() {
+		main_delq.push_function([this]() {
 			_vk.layout_cache.destroy_cached(_up.device);
 			});
 	}
@@ -853,7 +856,7 @@ namespace zebra {
 				.pPoolSizes = sizes.data(),
 			};
 			vkCreateDescriptorPool(_up.device, &pool_info, nullptr, &frames[i].descriptor_pool);
-			main_delq.push_function([=]() {
+			main_delq.push_function([this, i]() {
 				vkResetDescriptorPool(_up.device, frames[i].descriptor_pool, 0);
 				vkDestroyDescriptorPool(_up.device, frames[i].descriptor_pool, nullptr);
 				});
@@ -905,12 +908,12 @@ namespace zebra {
 		};
 
 		ImGui_ImplVulkan_Init(&init_info, _vk.forward_renderpass);
-		vku::vk_immediate(_up, [=](VkCommandBuffer cmd) {
+		vku::vk_immediate(_up, [this](VkCommandBuffer cmd) {
 			ImGui_ImplVulkan_CreateFontsTexture(cmd);
 			});
 
 		ImGui_ImplVulkan_DestroyFontUploadObjects();
-		main_delq.push_function([=]() {
+		main_delq.push_function([this, imgui_pool]() {
 			vkDestroyDescriptorPool(_up.device, imgui_pool, nullptr);
 			ImGui_ImplVulkan_Shutdown();
 			});
@@ -1051,8 +1054,9 @@ namespace zebra {
 
 		std::ifstream file(file_path, std::ios::ate | std::ios::binary);
 		if (!file.is_open()) {
-			DBG("couldnt open file");
-			return false;
+			DBG("couldnt open file: " << std::filesystem::current_path().c_str() << "/" << file_path_std.c_str());
+			
+			abort();
 		}
 
 		std::error_code pos_error;
@@ -1132,6 +1136,8 @@ namespace zebra {
 		Mesh mesh;
 		const size_t buffer_size = lmesh._vertices.size() * sizeof(lmesh._vertices[0]);
 		mesh.size = lmesh._vertices.size();
+
+		assert(buffer_size != 0); // you are trying to upload an empty mesh.
 
 		auto staging_buffer = create_buffer(_vk.allocator, buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
 
@@ -1365,7 +1371,7 @@ namespace zebra {
 			// -- drawing and animation
 
 			if (vkGetFenceStatus(_up.device, current_frame().renderF) == VK_SUCCESS) 	{ // actual rendering
-				auto start_frame = std::chrono::high_resolution_clock::now();
+				auto start_frame = std::chrono::steady_clock::now();
 				auto anim_dt = start_frame - _df.old_frame_start;
 				auto anim_dt_float = std::chrono::duration<float>(anim_dt).count();
 				frame_times.push_back(anim_dt_float);

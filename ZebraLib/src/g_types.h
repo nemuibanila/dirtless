@@ -52,7 +52,7 @@ namespace zebra {
 		glm::vec3 normal;
 		glm::vec3 color;
 
-		static constexpr VertexInputDescription get_vertex_description() {
+		static VertexInputDescription get_vertex_description() {
 			VertexInputDescription description;
 
 			//we will have just 1 vertex buffer binding, with a per-vertex rate
@@ -97,7 +97,7 @@ namespace zebra {
 		glm::vec3 color;
 		glm::vec2 uv;
 
-		static constexpr VertexInputDescription get_vertex_description() {
+		static VertexInputDescription get_vertex_description() {
 			VertexInputDescription description;
 
 			//we will have just 1 vertex buffer binding, with a per-vertex rate
@@ -158,6 +158,8 @@ namespace zebra {
 		glm::vec4 sunlight_color;
 		GPUCameraData camera;
 	};
+	
+	static_assert(sizeof(GPUSceneData) == 272);
 
 	
 }

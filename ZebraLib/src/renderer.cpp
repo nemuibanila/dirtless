@@ -102,7 +102,7 @@ namespace zebra {
 		}
 
 		constexpr VkClearValue clear_color = { .color = {0.2f, 0.2f, 1.f, 1.f} };
-		constexpr VkClearValue clear_depth = { .depthStencil = 1.f };
+		constexpr VkClearValue clear_depth = { .depthStencil = {1.f, 0 }};
 		void render(Renderer& renderer, Assets& assets, PerFrameData& frame, UploadContext& up, GPUSceneData& params, RenderData& rdata) {
 			// -- Data dependencies
 			VkRenderPass& forward_pass = rdata.forward_pass;
@@ -183,7 +183,7 @@ namespace zebra {
 
 			for (auto ridx = 0ull;; ridx += BATCH_SIZE) {
 				// -- start object buffer
-				auto left = std::min(BATCH_SIZE, object_vector.size() - ridx);
+				auto left = std::min(BATCH_SIZE, static_cast<u64>(object_vector.size() - ridx));
 				auto object_buffer = pop_hot_buffer(renderer, frame.renderF);
 				MappedBuffer<GPUObjectData> object_map{ up.allocator, object_buffer };
 				for (auto i = 0ull; i < left; i++) {
@@ -235,9 +235,11 @@ namespace zebra {
 						vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, material.pipeline_layout, 2, 1, &material.texture_set, 0, nullptr);
 					}
 
+					
 					VkDeviceSize vertex_offset = 0;
 					VkDeviceSize indirect_offset = DRAW_OFFSET + draw_i * sizeof(VkDrawIndirectCommand);
 					vkCmdBindVertexBuffers(frame.buf, 0, 1, &mesh.vertices.buffer, &vertex_offset);
+
 					vkCmdDrawIndirect(frame.buf, object_buffer.buffer, indirect_offset, 1, sizeof(VkDrawIndirectCommand));
 				}
 				// -- end draw command generator

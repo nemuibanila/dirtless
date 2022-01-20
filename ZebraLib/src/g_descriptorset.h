@@ -52,8 +52,12 @@ namespace zebra {
 		size_t hash() const {
 			auto result = std::hash<size_t>()(sizeof(bindings));
 			for (u32 i = 0; i < binding_count; i++) {
+				// ignore the error as the overflow is intended
+				#pragma GCC diagnostic push
+				#pragma GCC diagnostic ignored "-Wshift-count-overflow"
 				size_t binding_hash = bindings[i].binding | bindings[i].descriptorType << 8 | bindings[i].stageFlags << 32;
 				result ^= std::hash<size_t>()(binding_hash);
+				#pragma GCC diagnostic pop
 			}
 			return result;
 		}

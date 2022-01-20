@@ -30,4 +30,6 @@ namespace zebra {
 		glm::mat4 model_matrix;
 		glm::vec4 color;
 	};
+	
+	static_assert(sizeof(GPUObjectData) == 80);
 }
