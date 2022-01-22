@@ -28,14 +28,22 @@ namespace zebra {
 
 	struct VulkanNative {
 		VkQueue graphics_queue;
+		
+		render::RenderPassCache renderpass_cache;
 		VkRenderPass copy_pass;
 		VkRenderPass forward_renderpass;
+		VkRenderPass overlay_renderpass;
+		
 		VmaAllocator allocator;
 
 		VkFramebuffer forward_framebuffer;
+		VkFramebuffer overlay_framebuffer;
 		std::vector<VkFramebuffer> framebuffers;
 		std::vector<VkImageView> image_views;
 		std::vector<VkImage> images;
+
+		Texture overlay_texture;
+		Texture overlay_depth_texture;
 
 		Texture screen_texture;
 		Texture depth_texture;

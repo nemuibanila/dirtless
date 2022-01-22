@@ -7,6 +7,8 @@
 #include "g_descriptorset.h"
 #include "zebratypes.h"
 #include <deque>
+#include <span>
+#include "boost/container_hash/hash.hpp"
 
 namespace zebra {
 	namespace render {
@@ -53,6 +55,7 @@ namespace zebra {
 
 		struct Renderer {
 			std::vector<RenderObject> t_objects;
+			// refactor this into one big buffer uwu
 			std::deque<AllocBuffer> available_buffers;
 			std::deque<UsedBuffer> used_buffers;
 			std::deque<DangerBuffer> danger_buffers;
@@ -88,6 +91,51 @@ namespace zebra {
 		void render(Renderer& renderer, Assets& assets, PerFrameData& frame, UploadContext& up, GPUSceneData& params, RenderData& rdata);
 		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic = false);
 		void clear_buffers(zebra::render::Renderer& renderer, zebra::UploadContext& up);
+
+		struct DependencyInfo {
+			VkFormat format;
+			VkImageLayout attachment_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+			VkImageLayout initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+			VkImageLayout final_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			VkAttachmentLoadOp on_load = VK_ATTACHMENT_LOAD_OP_CLEAR;
+			VkAttachmentStoreOp on_store = VK_ATTACHMENT_STORE_OP_STORE;
+		};
+		
+
+		struct DependencyInfoHash {
+			std::size_t operator()(std::span<DependencyInfo> const& sdi) const noexcept {
+				size_t seed = 0;
+				for (auto di : sdi) {
+					boost::hash_combine(seed, di.format);
+					boost::hash_combine(seed, di.attachment_layout);
+					boost::hash_combine(seed, di.final_layout);
+					boost::hash_combine(seed, di.on_load);
+					boost::hash_combine(seed, di.on_store);
+				}
+				return seed;
+			}
+		};
+		
+		struct DependencyInfoEq {
+			constexpr bool operator()(const std::span<DependencyInfo>& lhs, const std::span<DependencyInfo>& rhs) const {
+				if (lhs.size() != rhs.size()) return false;
+				else {
+					return memcmp(lhs.data(), rhs.data(), lhs.size_bytes()) == 0;
+				}
+			}
+		};
+		
+		struct RenderPassCache {
+			VkDevice device;
+			std::unordered_map<std::span<DependencyInfo>, VkRenderPass, DependencyInfoHash, DependencyInfoEq> cache;
+			VkRenderPass get_or_create(std::span<DependencyInfo> info);
+			void clear();
+			
+			
+			RenderPassCache(VkDevice device = VK_NULL_HANDLE) {
+				this->device = device;
+			}
+		};
 
 		AllocBuffer pop_buffer(Renderer& renderer, bool bJustTake = false);
 		AllocBuffer pop_hot_buffer(Renderer& renderer, VkFence render_fence);

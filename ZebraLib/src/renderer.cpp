@@ -3,6 +3,7 @@
 #include "d_rel.h"
 #include "vki.h"
 #include "g_descriptorset.h"
+#include "z_debug.h"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <algorithm>
@@ -30,6 +31,78 @@ namespace zebra {
 		void name_handle(Assets& assets, std::string name, u64 handle) {
 			assets.t_names[name] = handle;
 		}
+		
+		VkRenderPass RenderPassCache::get_or_create(std::span<DependencyInfo> info) {
+			if (cache.find(info) == cache.end()) [[unlikely]] {
+				// fill cache
+				std::vector<VkAttachmentDescription> attachment_descs(info.size());
+				std::vector<VkAttachmentReference> attachment_references(info.size());
+				std::vector<VkAttachmentReference> color_attachment_refs(info.size());
+				std::vector<VkAttachmentReference> depth_attachment_refs(1);
+				
+				for (DependencyInfo di : info) {
+					attachment_descs.emplace_back(
+						vki::attachment_description(
+							di.format,
+							di.initial_layout,
+							di.final_layout,
+							di.on_load,
+							di.on_store
+						)
+					);
+					
+					auto attachment_ref = VkAttachmentReference {
+							.attachment = attachment_references.size(),
+							.layout = di.attachment_layout
+						};
+					
+					attachment_references.emplace_back(
+						attachment_ref
+					);
+					
+					switch(di.attachment_layout) {
+						case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+							color_attachment_refs.emplace_back(attachment_ref);
+							break;
+						case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
+							depth_attachment_refs.emplace_back(attachment_ref);
+							if (depth_attachment_refs.size() > 1) [[unlikely]] {
+								DBG("more than one depth attachment. this is not supported, but we will let it slide.. however, you should change this.");
+							}
+							
+							break;
+						[[unlikely]] default:
+							DBG("invalid attachment layout passed. you probably didnt want this! layout: " << attachment_ref.layout << " idx: " << attachment_ref.attachment);
+							abort();
+							
+					}
+				}
+				
+				VkSubpassDescription subpass = {
+					.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+					.colorAttachmentCount = color_attachment_refs.size(),
+					.pColorAttachments = color_attachment_refs.data(),
+					.pDepthStencilAttachment = depth_attachment_refs.data(),
+				};
+				
+				VkRenderPassCreateInfo render_pass_info = {
+					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+					.attachmentCount = (u32)attachment_descs.size(),
+					.pAttachments = attachment_descs.data(),
+					.subpassCount = 1,
+					.pSubpasses = &subpass
+				};
+				VkRenderPass uwu_finally;
+				VK_CHECK(vkCreateRenderPass(this->device, &render_pass_info, nullptr, &uwu_finally));
+				
+				cache[info] = uwu_finally;
+				return uwu_finally;
+				
+			} else [[likely]] {
+				return cache[info];
+			}
+		}
+
 		
 		void add_renderable(Renderer& renderer, RenderObject object, bool bStatic) {
 			if (bStatic) {

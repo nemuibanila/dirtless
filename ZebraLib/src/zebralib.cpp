@@ -314,6 +314,59 @@ namespace zebra {
 				vkDestroyRenderPass(_up.device, _vk.forward_renderpass, nullptr);
 				});
 		}
+		
+		// overlay pass
+		{
+			auto color_attachment = vki::attachment_description(
+				_vk.overlay_texture.format,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				VK_ATTACHMENT_LOAD_OP_CLEAR,
+				VK_ATTACHMENT_STORE_OP_STORE);
+
+			auto depth_attachment = vki::attachment_description(
+				_vk.overlay_depth_texture.format,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				VK_ATTACHMENT_LOAD_OP_CLEAR,
+				VK_ATTACHMENT_STORE_OP_STORE);
+
+			
+
+			VkAttachmentReference color_attachment_ref = {
+				.attachment = 0,
+				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			};
+			VkAttachmentReference depth_attachment_ref = {
+				.attachment = 1,
+				.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			};
+
+			auto color_attachment_references = { color_attachment_ref };
+
+			VkSubpassDescription subpass = {
+				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+				.colorAttachmentCount = (u32)color_attachment_references.size(),
+				.pColorAttachments = color_attachment_references.begin(),
+				.pDepthStencilAttachment = &depth_attachment_ref,
+			};
+
+			auto attachments = { color_attachment, depth_attachment };
+
+			VkRenderPassCreateInfo render_pass_info = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+				.attachmentCount = (u32)attachments.size(),
+				.pAttachments = attachments.begin(),
+				.subpassCount = 1,
+				.pSubpasses = &subpass,
+			};
+
+			VK_CHECK(vkCreateRenderPass(_up.device, &render_pass_info, nullptr, &_vk.overlay_renderpass));
+			swapchain_delq.push_function([this]() {
+				vkDestroyRenderPass(_up.device, _vk.overlay_renderpass, nullptr);
+				});
+		}
+		
 
 		// copy pass 
 		{
@@ -374,6 +427,21 @@ namespace zebra {
 				});
 
 		}
+		
+		// overlay pass
+		{
+			auto overlay_info = vki::framebuffer_info(_vk.overlay_renderpass, _window.extent());
+			auto attachments = { _vk.overlay_texture.view, _vk.overlay_depth_texture.view };
+			overlay_info.attachmentCount = attachments.size();
+			overlay_info.pAttachments = attachments.begin();
+			VK_CHECK(vkCreateFramebuffer(_up.device, &overlay_info, nullptr, &_vk.overlay_framebuffer));
+			swapchain_delq.push_function([this]() {
+				vkDestroyFramebuffer(_up.device, _vk.overlay_framebuffer, nullptr);
+				});
+
+		}
+		
+		
 		// final pass to copy to screen
 		const u32 swapchain_imagecount = (u32)_vk.image_views.size();
 		auto swapchain_imageviews = _vk.image_views;
@@ -447,12 +515,15 @@ namespace zebra {
 			};
 			VkImageCreateInfo depth_image_info = vki::image_create_info(VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, depth_image_extent);
 			create_gpu_texture(_up, depth_image_info, VK_IMAGE_ASPECT_DEPTH_BIT, _vk.depth_texture);
+			VkImageCreateInfo odepth_image_info = vki::image_create_info(VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, depth_image_extent);
+			create_gpu_texture(_up, odepth_image_info, VK_IMAGE_ASPECT_DEPTH_BIT, _vk.overlay_depth_texture);
 
 			swapchain_delq.push_function([this]() {
 				destroy_texture(_up, _vk.depth_texture);
+				destroy_texture(_up, _vk.overlay_depth_texture);
 				});
 		}
-		// screen texture
+		// screen textures
 		{
 			VkExtent3D render_image_extent = {
 				.width = _window.extent().width,
@@ -462,9 +533,11 @@ namespace zebra {
 
 			auto screen_texture_info = vki::image_create_info(VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, render_image_extent);
 			create_gpu_texture(_up, screen_texture_info, VK_IMAGE_ASPECT_COLOR_BIT, _vk.screen_texture);
+			create_gpu_texture(_up, screen_texture_info, VK_IMAGE_ASPECT_COLOR_BIT, _vk.overlay_texture);
 
 			swapchain_delq.push_function([this]() {
 				destroy_texture(_up, _vk.screen_texture);
+				destroy_texture(_up, _vk.overlay_texture);
 				});
 
 		}
@@ -678,14 +751,23 @@ namespace zebra {
 		VkPipelineLayout blit_pipe_layout = create_pipeline_layout<DefaultFatSize>(_up.device, _vk.layout_cache, std::span(blit_fat_sets), std::span(empty_range));
 		
 		// fullscreen blit
-		auto blit_pipeline = pipeline_builder
+		pipeline_builder
 			.no_vertex_format()
 			.depth(false, false, VK_COMPARE_OP_ALWAYS)
 			.clear_shaders()
 			.add_shader(VK_SHADER_STAGE_VERTEX_BIT, fullscreen_vertex)
 			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, blit_fragment)
-			.set_layout(blit_pipe_layout)
-			.build_pipeline(_up.device, _vk.copy_pass);
+			.set_layout(blit_pipe_layout);
+			
+		pipeline_builder._color_blend_attachment.blendEnable = VK_TRUE;
+		pipeline_builder._color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+		pipeline_builder._color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		pipeline_builder._color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+		pipeline_builder._color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		pipeline_builder._color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		pipeline_builder._color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+				
+		auto blit_pipeline = pipeline_builder.build_pipeline(_up.device, _vk.copy_pass);
 
 		auto blit_fk = render::insert_material(assets, { VK_NULL_HANDLE, blit_pipeline, blit_pipe_layout });
 		render::name_handle(assets, "blit", blit_fk);
@@ -1186,12 +1268,11 @@ namespace zebra {
 		uint32_t swapchain_image_idx;
 		auto acquire_result = vkAcquireNextImageKHR(_up.device, _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
 
-		render::begin_collect(renderer, _up);
+
 		//for (auto& static_obj : static_renderables) {
 		//	render::add_renderable(renderer, static_obj);
 		//}
 
-		render::finish_collect(this->renderer);
 
 		if (acquire_result == VK_SUCCESS) {
 			// we have an image to render to
@@ -1231,16 +1312,35 @@ namespace zebra {
 				VkViewport viewport = vki::viewport_info(_window.extent());
 				_camera.aspect = viewport.width / viewport.height;
 
-				render::render(this->renderer, this->assets, frame, this->_up, scene_data, rdata);
+				render::begin_collect(renderer, _up);
+				render::finish_collect(this->renderer);
 
+				const VkClearValue clear_color = { .color = {0.0f, 0.0f, 0.f, 0.f} };
+				const VkClearValue clear_depth = { .depthStencil = {1.f, 0 }};
+				auto clear_values = { clear_color, clear_depth };
+				auto overlay_pass_info = vki::renderpass_begin_info(_vk.overlay_renderpass, _vk.overlay_framebuffer, _window.extent());
+				overlay_pass_info.clearValueCount = 2;
+				overlay_pass_info.pClearValues = clear_values.begin();
 
+				vkCmdBeginRenderPass(frame.buf, &overlay_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 				auto imgui_draw_data = ImGui::GetDrawData();
 				if (imgui_draw_data != nullptr) {
 					ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, current_frame().buf);
 				}
+				vkCmdEndRenderPass(frame.buf);
+				
+				auto proper_pass_info = vki::renderpass_begin_info(_vk.forward_renderpass, _vk.forward_framebuffer, _window.extent());
+				proper_pass_info.clearValueCount = 2;
+				proper_pass_info.pClearValues = clear_values.begin();
+				//vkCmdBeginRenderPass(frame.buf, &proper_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+				render::render(this->renderer, this->assets, frame, this->_up, scene_data, rdata);
+				
+				vkCmdEndRenderPass(frame.buf);
+				
+				
+
 				// --
 
-				vkCmdEndRenderPass(current_frame().buf);
 			}
 
 			// copy pass here
@@ -1278,6 +1378,13 @@ namespace zebra {
 				DescriptorBuilder::begin(_up.device, frame.descriptor_pool, _vk.layout_cache)
 					.bind_image(0, image_buffer_info, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
 					.build(copy_set);
+					
+				VkDescriptorSet overlay_set;
+				
+				image_buffer_info.imageView = _vk.overlay_texture.view;
+				DescriptorBuilder::begin(_up.device, frame.descriptor_pool, _vk.layout_cache)
+					.bind_image(0, image_buffer_info, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+					.build(overlay_set);
 
 				// -- immediate
 
@@ -1298,8 +1405,11 @@ namespace zebra {
 				auto blit_material = assets.t_materials[assets.t_names["blit"]];
 
 				vkCmdBindPipeline(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline);
+				
 				vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline_layout, 0, 1, &copy_set, 0, nullptr);
-
+				vkCmdDraw(frame.buf, 3, 1, 0, 0);
+				
+				vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline_layout, 0, 1, &overlay_set, 0, nullptr);
 				vkCmdDraw(frame.buf, 3, 1, 0, 0);
 				vkCmdEndRenderPass(frame.buf);
 			}
