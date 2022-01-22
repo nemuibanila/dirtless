@@ -35,12 +35,12 @@ namespace zebra {
 		VkRenderPass RenderPassCache::get_or_create(std::span<DependencyInfo> info) {
 			if (cache.find(info) == cache.end()) [[unlikely]] {
 				// fill cache
-				std::vector<VkAttachmentDescription> attachment_descs(info.size());
-				std::vector<VkAttachmentReference> attachment_references(info.size());
-				std::vector<VkAttachmentReference> color_attachment_refs(info.size());
-				std::vector<VkAttachmentReference> depth_attachment_refs(1);
+				std::vector<VkAttachmentDescription> attachment_descs;
+				std::vector<VkAttachmentReference> attachment_references;
+				std::vector<VkAttachmentReference> color_attachment_refs;
+				std::vector<VkAttachmentReference> depth_attachment_refs;
 				
-				for (DependencyInfo di : info) {
+				for (DependencyInfo& di : info) {
 					attachment_descs.emplace_back(
 						vki::attachment_description(
 							di.format,
@@ -52,7 +52,7 @@ namespace zebra {
 					);
 					
 					auto attachment_ref = VkAttachmentReference {
-							.attachment = attachment_references.size(),
+							.attachment = (u32)attachment_references.size(),
 							.layout = di.attachment_layout
 						};
 					
@@ -64,7 +64,7 @@ namespace zebra {
 						case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
 							color_attachment_refs.emplace_back(attachment_ref);
 							break;
-						case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
+						case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
 							depth_attachment_refs.emplace_back(attachment_ref);
 							if (depth_attachment_refs.size() > 1) [[unlikely]] {
 								DBG("more than one depth attachment. this is not supported, but we will let it slide.. however, you should change this.");
@@ -73,14 +73,14 @@ namespace zebra {
 							break;
 						[[unlikely]] default:
 							DBG("invalid attachment layout passed. you probably didnt want this! layout: " << attachment_ref.layout << " idx: " << attachment_ref.attachment);
-							abort();
+							while(true);
 							
 					}
 				}
 				
 				VkSubpassDescription subpass = {
 					.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-					.colorAttachmentCount = color_attachment_refs.size(),
+					.colorAttachmentCount = (u32)color_attachment_refs.size(),
 					.pColorAttachments = color_attachment_refs.data(),
 					.pDepthStencilAttachment = depth_attachment_refs.data(),
 				};
@@ -101,6 +101,18 @@ namespace zebra {
 			} else [[likely]] {
 				return cache[info];
 			}
+		}
+		
+		void RenderPassCache::clear() {
+			
+			// device nonexistant lol
+			if(device == VK_NULL_HANDLE) return;
+			
+			for(auto& pass_kv : cache) {
+				vkDestroyRenderPass(device, pass_kv.second, nullptr);
+			}
+			
+			cache.clear();
 		}
 
 		
@@ -163,12 +175,12 @@ namespace zebra {
 		void finish_collect(Renderer& renderer) {
 			// frustrum culling
 			std::sort(renderer.t_objects.begin(), renderer.t_objects.end(), [](const RenderObject& a, const RenderObject& b) {
-				return a.material_fk > b.material_fk || a.material_fk == b.material_fk && a.mesh_fk > b.mesh_fk;
+				return (a.material_fk > b.material_fk) || (a.material_fk == b.material_fk && a.mesh_fk > b.mesh_fk);
 				});
 
 			if (!renderer.b_statics_sorted) {
 				std::sort(renderer.t_statics.begin(), renderer.t_statics.end(), [](const RenderObject& a, const RenderObject& b) {
-					return a.material_fk > b.material_fk || a.material_fk == b.material_fk && a.mesh_fk > b.mesh_fk;
+					return (a.material_fk > b.material_fk) || (a.material_fk == b.material_fk && a.mesh_fk > b.mesh_fk);
 					}); 
 				renderer.b_statics_sorted = true;
 			}
@@ -178,25 +190,12 @@ namespace zebra {
 		constexpr VkClearValue clear_depth = { .depthStencil = {1.f, 0 }};
 		void render(Renderer& renderer, Assets& assets, PerFrameData& frame, UploadContext& up, GPUSceneData& params, RenderData& rdata) {
 			// -- Data dependencies
-			VkRenderPass& forward_pass = rdata.forward_pass;
-			VkFramebuffer& forward_framebuffer = rdata.forward_framebuffer;
 			VkExtent2D& forward_extent = rdata.forward_extent;
 			DescriptorLayoutCache& dcache = *rdata.dcache;
 
 			// -- Data dependencies end
-
-
-			// SHADOW PASS
-			// ...
-			// ...
-
-			// FORWARD PASS
-			auto clear_values = { clear_color, clear_depth };
-			auto renderpass_info = vki::renderpass_begin_info(forward_pass, forward_framebuffer, forward_extent);
-			renderpass_info.clearValueCount = 2;
-			renderpass_info.pClearValues = clear_values.begin();
-
-			vkCmdBeginRenderPass(frame.buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+			
+			//vkCmdBeginRenderPass(frame.buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 			auto viewport = vki::viewport_info(forward_extent);
 			vkCmdSetViewport(frame.buf, 0, 1, &viewport);
 			VkRect2D scissor = { .offset = { 0, 0 }, .extent = forward_extent};
@@ -222,7 +221,7 @@ namespace zebra {
 			}
 
 			//
-			draw_batches(renderer, up, frame, dcache, renderer.t_statics, assets, scene_set, true);
+			draw_batches(renderer, up, frame, dcache, renderer.t_statics, assets, scene_set);
 			draw_batches(renderer, up, frame, dcache, renderer.t_objects, assets, scene_set);
 			// POSTPROCESS PASS
 		}
@@ -247,7 +246,7 @@ namespace zebra {
 
 		}
 
-		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic) {
+		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set) {
 			const u64 BATCH_SIZE = (SINGLE_BUFFER_SIZE / (sizeof(GPUObjectData) + sizeof(VkDrawIndirectCommand)));
 			const u64 DRAW_OFFSET = BATCH_SIZE * sizeof(GPUObjectData);
 

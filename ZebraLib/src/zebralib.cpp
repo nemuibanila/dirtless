@@ -181,7 +181,6 @@ namespace zebra {
 		load_meshes();
 
 		DBG("camera");
-		auto rotation_initial = glm::quat(1.f, 0.f, 0.f, 0.f);
 		_camera = {
 			._pos = glm::vec3(0.f),
 			.movement_smoothing = 4.f,
@@ -211,12 +210,6 @@ namespace zebra {
 	}
 
 	bool zCore::init_per_frame_data() {
-		//for (auto i = 0u; i < FRAME_OVERLAP; i++) {
-		//	auto& frame = frames[i];
-		//}
-
-
-
 		init_descriptor_sets();
 		return true;
 	}
@@ -260,164 +253,64 @@ namespace zebra {
 		return true;
 	}
 
-	// make more generic, need multiple passes
+	render::DependencyInfo color_dependency(const VulkanNative& _vk) {
+		return 	render::DependencyInfo {
+				.format = _vk.screen_texture.format,
+				.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.final_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				.on_load = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.on_store = VK_ATTACHMENT_STORE_OP_STORE,
+				.attachment_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+			};
+	}
+	
+	
+	render::DependencyInfo depth_dependency(const VulkanNative& _vk) {
+		return 	render::DependencyInfo {
+				.format = _vk.depth_texture.format,
+				.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.final_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				.on_load = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.on_store = VK_ATTACHMENT_STORE_OP_STORE,
+				.attachment_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+			};
+	}
+	
+	
+	render::DependencyInfo blit_dependency(const Window& _window) {
+		return 	render::DependencyInfo {
+				.format = _window.vkb_swapchain.image_format,
+				.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.final_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				.on_load = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+				.on_store = VK_ATTACHMENT_STORE_OP_STORE,
+				.attachment_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+			};
+	}
+
+
 	bool zCore::init_default_renderpass() {
-
-		// forward pass
-		{
-			auto color_attachment = vki::attachment_description(
-				_vk.screen_texture.format,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-				VK_ATTACHMENT_LOAD_OP_CLEAR,
-				VK_ATTACHMENT_STORE_OP_STORE);
-
-			auto depth_attachment = vki::attachment_description(
-				_vk.depth_texture.format,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-				VK_ATTACHMENT_LOAD_OP_CLEAR,
-				VK_ATTACHMENT_STORE_OP_STORE);
-
-			
-
-			VkAttachmentReference color_attachment_ref = {
-				.attachment = 0,
-				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			};
-			VkAttachmentReference depth_attachment_ref = {
-				.attachment = 1,
-				.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			};
-
-			auto color_attachment_references = { color_attachment_ref };
-
-			VkSubpassDescription subpass = {
-				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-				.colorAttachmentCount = (u32)color_attachment_references.size(),
-				.pColorAttachments = color_attachment_references.begin(),
-				.pDepthStencilAttachment = &depth_attachment_ref,
-			};
-
-			auto attachments = { color_attachment, depth_attachment };
-
-			VkRenderPassCreateInfo render_pass_info = {
-				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-				.attachmentCount = (u32)attachments.size(),
-				.pAttachments = attachments.begin(),
-				.subpassCount = 1,
-				.pSubpasses = &subpass,
-			};
-
-			VK_CHECK(vkCreateRenderPass(_up.device, &render_pass_info, nullptr, &_vk.forward_renderpass));
-			swapchain_delq.push_function([this]() {
-				vkDestroyRenderPass(_up.device, _vk.forward_renderpass, nullptr);
-				});
-		}
-		
-		// overlay pass
-		{
-			auto color_attachment = vki::attachment_description(
-				_vk.overlay_texture.format,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-				VK_ATTACHMENT_LOAD_OP_CLEAR,
-				VK_ATTACHMENT_STORE_OP_STORE);
-
-			auto depth_attachment = vki::attachment_description(
-				_vk.overlay_depth_texture.format,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-				VK_ATTACHMENT_LOAD_OP_CLEAR,
-				VK_ATTACHMENT_STORE_OP_STORE);
-
-			
-
-			VkAttachmentReference color_attachment_ref = {
-				.attachment = 0,
-				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			};
-			VkAttachmentReference depth_attachment_ref = {
-				.attachment = 1,
-				.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			};
-
-			auto color_attachment_references = { color_attachment_ref };
-
-			VkSubpassDescription subpass = {
-				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-				.colorAttachmentCount = (u32)color_attachment_references.size(),
-				.pColorAttachments = color_attachment_references.begin(),
-				.pDepthStencilAttachment = &depth_attachment_ref,
-			};
-
-			auto attachments = { color_attachment, depth_attachment };
-
-			VkRenderPassCreateInfo render_pass_info = {
-				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-				.attachmentCount = (u32)attachments.size(),
-				.pAttachments = attachments.begin(),
-				.subpassCount = 1,
-				.pSubpasses = &subpass,
-			};
-
-			VK_CHECK(vkCreateRenderPass(_up.device, &render_pass_info, nullptr, &_vk.overlay_renderpass));
-			swapchain_delq.push_function([this]() {
-				vkDestroyRenderPass(_up.device, _vk.overlay_renderpass, nullptr);
-				});
-		}
-		
-
-		// copy pass 
-		{
-			auto color_attachment = vki::attachment_description(
-				_window.vkb_swapchain.image_format,
-				VK_IMAGE_LAYOUT_UNDEFINED,
-				VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-				VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-				VK_ATTACHMENT_STORE_OP_STORE);
-
-			VkAttachmentReference color_attachment_ref = {
-				.attachment = 0,
-				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			};
-
-			VkSubpassDescription subpass = {
-				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-				.colorAttachmentCount = 1,
-				.pColorAttachments = &color_attachment_ref,
-				.pDepthStencilAttachment = nullptr,
-			};
-
-			VkRenderPassCreateInfo render_pass_info = {
-				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-				.attachmentCount = 1,
-				.pAttachments = &color_attachment,
-				.subpassCount = 1,
-				.pSubpasses = &subpass,
-			};
-
-			VK_CHECK(vkCreateRenderPass(_up.device, &render_pass_info, nullptr, &_vk.copy_pass));
-			swapchain_delq.push_function([this]() {
-				vkDestroyRenderPass(_up.device, _vk.copy_pass, nullptr);
-				});
-		}
-
+		// lol jk this just destructs them at the end
+		// and doesnt even create render passes anymore
+		main_delq.push_function([this]() {
+			_vk.renderpass_cache.clear();
+		});
 		return true;
 	}
 
 
-
+	// TODO: remove this
 	// as render pass becomes more generic, so does this
 	bool zCore::init_framebuffers() {
 
-		i32 w, h;
-		w = _window.extent().width;
-		h = _window.extent().height;
+		std::array<render::DependencyInfo, 2> deps_1 = { color_dependency(_vk), depth_dependency(_vk) };
+		auto forward_renderpass = _vk.renderpass_cache.get_or_create(deps_1);
 
 		// forward pass
 		{
-			auto forward_info = vki::framebuffer_info(_vk.forward_renderpass, _window.extent());
+
+			
+			auto forward_info = vki::framebuffer_info(forward_renderpass, _window.extent());
 			auto attachments = { _vk.screen_texture.view, _vk.depth_texture.view };
 			forward_info.attachmentCount = attachments.size();
 			forward_info.pAttachments = attachments.begin();
@@ -428,9 +321,14 @@ namespace zebra {
 
 		}
 		
+		std::array<render::DependencyInfo, 2> deps_2 = { color_dependency(_vk), depth_dependency(_vk) };
+		auto overlay_renderpass = _vk.renderpass_cache.get_or_create(deps_2);
+			
+		
 		// overlay pass
 		{
-			auto overlay_info = vki::framebuffer_info(_vk.overlay_renderpass, _window.extent());
+
+			auto overlay_info = vki::framebuffer_info(overlay_renderpass, _window.extent());
 			auto attachments = { _vk.overlay_texture.view, _vk.overlay_depth_texture.view };
 			overlay_info.attachmentCount = attachments.size();
 			overlay_info.pAttachments = attachments.begin();
@@ -447,7 +345,10 @@ namespace zebra {
 		auto swapchain_imageviews = _vk.image_views;
 		_vk.framebuffers = std::vector<VkFramebuffer>(_vk.image_views.size());
 
-		auto final_framebuffer_info = vki::framebuffer_info(_vk.copy_pass, _window.extent());
+		std::array<render::DependencyInfo, 1> deps_3 = { blit_dependency(_window) };
+		auto blit_pass = _vk.renderpass_cache.get_or_create(deps_3);
+
+		auto final_framebuffer_info = vki::framebuffer_info(blit_pass, _window.extent());
 		for (auto i = 0u; i < swapchain_imagecount; i++) {
 			final_framebuffer_info.attachmentCount = 1;
 			final_framebuffer_info.pAttachments = &swapchain_imageviews[i];
@@ -550,6 +451,10 @@ namespace zebra {
 	bool zCore::recreate_swapchain() {
 
 		vkDeviceWaitIdle(_up.device);
+		// go into begin_collect state to ensure that scratch buffers are correctly unused
+		render::begin_collect(renderer, _up);
+		assert(renderer.danger_buffers.size() == 0);
+		
 		swapchain_delq.flush();
 		int w, h;
 		do {
@@ -567,8 +472,7 @@ namespace zebra {
 		DBG("per frame data");
 		if (!this->init_swapchain_per_frame_data()) return false;
 
-		DBG("render pass");
-		if (!this->init_default_renderpass()) return false;
+		_vk.renderpass_cache.clear();
 
 		DBG("framebuffers");
 		if (!this->init_framebuffers()) return false;
@@ -653,6 +557,7 @@ namespace zebra {
 		vkGetPhysicalDeviceProperties(_vk.vkb_device.physical_device.physical_device, &_vk.gpu_properties);
 		DBG("gpu minimum buffer alignment: " << _vk.gpu_properties.limits.minUniformBufferOffsetAlignment);
 		init_upload_context();
+		_vk.renderpass_cache.device = _vk.vkb_device.device;
 
 		DBG("complete and ready to use.");
 		return true;
@@ -703,6 +608,9 @@ namespace zebra {
 		std::cout << mesh_fat_sets[1].bindings[0].descriptorType;
 		auto mesh_layout = create_pipeline_layout<DefaultFatSize>(_up.device, _vk.layout_cache, std::span(mesh_fat_sets), std::span(push_constants));
 
+		std::array<render::DependencyInfo, 2> deps_1 = { color_dependency(_vk), depth_dependency(_vk) };
+		auto forward_renderpass = _vk.renderpass_cache.get_or_create(deps_1);
+
 		// mesh color shader
 		auto vertex_description = P3N3C3U2::get_vertex_description();
 		auto mesh_pipeline = pipeline_builder
@@ -713,7 +621,7 @@ namespace zebra {
 			.clear_shaders()
 			.add_shader(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
 			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, default_lit_frag)
-			.build_pipeline(_up.device, _vk.forward_renderpass);
+			.build_pipeline(_up.device, forward_renderpass);
 
 		auto defaultmesh_fk = render::insert_material(assets, {
 			.texture_set = VK_NULL_HANDLE,
@@ -739,7 +647,7 @@ namespace zebra {
 			.clear_shaders()
 			.add_shader(VK_SHADER_STAGE_VERTEX_BIT, mesh_triangle_vertex)
 			.add_shader(VK_SHADER_STAGE_FRAGMENT_BIT, textured_mesh_shader)
-			.build_pipeline(_up.device, _vk.forward_renderpass);
+			.build_pipeline(_up.device, forward_renderpass);
 
 		auto tmesh_fk = render::insert_material(assets, { VK_NULL_HANDLE, tex_pipeline, stex_pipe_layout });
 		render::name_handle(assets, "texturedmesh", tmesh_fk);
@@ -766,8 +674,11 @@ namespace zebra {
 		pipeline_builder._color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
 		pipeline_builder._color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
 		pipeline_builder._color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
-				
-		auto blit_pipeline = pipeline_builder.build_pipeline(_up.device, _vk.copy_pass);
+		
+		std::array<render::DependencyInfo, 1> deps_3 = { blit_dependency(_window) };
+		auto blit_pass = _vk.renderpass_cache.get_or_create(deps_3);
+		
+		auto blit_pipeline = pipeline_builder.build_pipeline(_up.device, blit_pass);
 
 		auto blit_fk = render::insert_material(assets, { VK_NULL_HANDLE, blit_pipeline, blit_pipe_layout });
 		render::name_handle(assets, "blit", blit_fk);
@@ -989,7 +900,10 @@ namespace zebra {
 				},
 		};
 
-		ImGui_ImplVulkan_Init(&init_info, _vk.forward_renderpass);
+		std::array<render::DependencyInfo, 2> deps_1 = { color_dependency(_vk), depth_dependency(_vk) };
+		auto forward_renderpass = _vk.renderpass_cache.get_or_create(deps_1);
+
+		ImGui_ImplVulkan_Init(&init_info, forward_renderpass);
 		vku::vk_immediate(_up, [this](VkCommandBuffer cmd) {
 			ImGui_ImplVulkan_CreateFontsTexture(cmd);
 			});
@@ -1026,6 +940,9 @@ namespace zebra {
 	}
 
 	void zCore::_glfw_key_callback(GLFWwindow* window, i32 key, i32 scancode, i32 action, i32 mods) {
+
+		(void) window;
+		(void) scancode;
 
 		Key k{ key };
 		KeyCondition cond;
@@ -1065,6 +982,7 @@ namespace zebra {
 	}
 
 	void zCore::_glfw_mouse_position_callback(GLFWwindow* window, double x, double y) {
+		(void) window;
 		if (cursor_use_absolute_position) {
 			// schedule UI to update, but I dont have UI yet..
 		} else {
@@ -1259,11 +1177,6 @@ namespace zebra {
 	}
 
 	void zCore::draw() {
-		
-		auto monitor = glfwGetPrimaryMonitor();
-		auto refresh_rate = glfwGetVideoMode(monitor)->refreshRate;
-		auto dt = 1.f / 100.f;
-
 
 		uint32_t swapchain_image_idx;
 		auto acquire_result = vkAcquireNextImageKHR(_up.device, _window.swapchain(), 0, current_frame().presentS, nullptr, &swapchain_image_idx);
@@ -1303,8 +1216,15 @@ namespace zebra {
 				};
 
 				
+				std::array<render::DependencyInfo, 2> deps_1 = { color_dependency(_vk), depth_dependency(_vk) };
+				auto forward_renderpass = _vk.renderpass_cache.get_or_create(deps_1);
+				
+				std::array<render::DependencyInfo, 2> deps_2 = { color_dependency(_vk), depth_dependency(_vk) };
+				auto overlay_renderpass = _vk.renderpass_cache.get_or_create(deps_2);
+				
+				
 				render::RenderData rdata = {
-					.forward_pass = _vk.forward_renderpass,
+					.forward_pass = forward_renderpass,
 					.forward_framebuffer = _vk.forward_framebuffer,
 					.forward_extent = _window.extent(),
 					.dcache = &_vk.layout_cache,
@@ -1315,25 +1235,33 @@ namespace zebra {
 				render::begin_collect(renderer, _up);
 				render::finish_collect(this->renderer);
 
-				const VkClearValue clear_color = { .color = {0.0f, 0.0f, 0.f, 0.f} };
+				// This doesnt look pretty at all
+				const VkClearValue clear_color = { .color = {0.6f, 0.4f, 0.4f, 1.f} };
 				const VkClearValue clear_depth = { .depthStencil = {1.f, 0 }};
 				auto clear_values = { clear_color, clear_depth };
-				auto overlay_pass_info = vki::renderpass_begin_info(_vk.overlay_renderpass, _vk.overlay_framebuffer, _window.extent());
+				
+				// TODO: Get the framebuffer dynamically from a cache as well!
+				// It is possible to create the textures backing the framebuffers dynamically too
+				// That way, we can build complex rendering pipelines with multiple passes without
+				// bloating the _vk struct.
+				// Swapchain images still have to be a special case I think.
+				auto overlay_pass_info = vki::renderpass_begin_info(overlay_renderpass, _vk.overlay_framebuffer, _window.extent());
 				overlay_pass_info.clearValueCount = 2;
 				overlay_pass_info.pClearValues = clear_values.begin();
 
 				vkCmdBeginRenderPass(frame.buf, &overlay_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+				//auto proper_pass_info = vki::renderpass_begin_info(forward_renderpass, _vk.forward_framebuffer, _window.extent());
+				//proper_pass_info.clearValueCount = 2;
+				//proper_pass_info.pClearValues = clear_values.begin();
+				//vkCmdBeginRenderPass(frame.buf, &proper_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+				render::render(this->renderer, this->assets, frame, this->_up, scene_data, rdata);
+				
 				auto imgui_draw_data = ImGui::GetDrawData();
 				if (imgui_draw_data != nullptr) {
 					ImGui_ImplVulkan_RenderDrawData(imgui_draw_data, current_frame().buf);
 				}
-				vkCmdEndRenderPass(frame.buf);
-				
-				auto proper_pass_info = vki::renderpass_begin_info(_vk.forward_renderpass, _vk.forward_framebuffer, _window.extent());
-				proper_pass_info.clearValueCount = 2;
-				proper_pass_info.pClearValues = clear_values.begin();
-				//vkCmdBeginRenderPass(frame.buf, &proper_pass_info, VK_SUBPASS_CONTENTS_INLINE);
-				render::render(this->renderer, this->assets, frame, this->_up, scene_data, rdata);
+				//vkCmdEndRenderPass(frame.buf);
 				
 				vkCmdEndRenderPass(frame.buf);
 				
@@ -1345,28 +1273,6 @@ namespace zebra {
 
 			// copy pass here
 			{
-				VkImageMemoryBarrier depth_image_barrier = {
-					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-					.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-					.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-					.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-					.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-					.image = _vk.depth_texture.image,
-					.subresourceRange = {
-						.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-						.levelCount = VK_REMAINING_MIP_LEVELS,
-						.layerCount = VK_REMAINING_ARRAY_LAYERS,
-					},
-
-				};
-
-				vkCmdPipelineBarrier(current_frame().buf,
-					VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-					VK_DEPENDENCY_BY_REGION_BIT,
-					0, nullptr,
-					0, nullptr,
-					1, &depth_image_barrier);
 
 				// -- immediate
 				VkDescriptorImageInfo image_buffer_info;
@@ -1388,8 +1294,11 @@ namespace zebra {
 
 				// -- immediate
 
+				std::array<render::DependencyInfo, 1> deps_3 = { blit_dependency(_window) };
+				auto blit_pass = _vk.renderpass_cache.get_or_create(deps_3);
+
 				VkExtent2D copy_pass_extent = _window.vkb_swapchain.extent;
-				VkRenderPassBeginInfo copy_rp_info = vki::renderpass_begin_info(_vk.copy_pass, _vk.framebuffers[swapchain_image_idx], copy_pass_extent);
+				VkRenderPassBeginInfo copy_rp_info = vki::renderpass_begin_info(blit_pass, _vk.framebuffers[swapchain_image_idx], copy_pass_extent);
 
 				VkViewport viewport = vki::viewport_info(_window.extent());
 
@@ -1405,9 +1314,6 @@ namespace zebra {
 				auto blit_material = assets.t_materials[assets.t_names["blit"]];
 
 				vkCmdBindPipeline(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline);
-				
-				vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline_layout, 0, 1, &copy_set, 0, nullptr);
-				vkCmdDraw(frame.buf, 3, 1, 0, 0);
 				
 				vkCmdBindDescriptorSets(frame.buf, VK_PIPELINE_BIND_POINT_GRAPHICS, blit_material.pipeline_layout, 0, 1, &overlay_set, 0, nullptr);
 				vkCmdDraw(frame.buf, 3, 1, 0, 0);
@@ -1498,7 +1404,13 @@ namespace zebra {
 				ImGui::Text("_gt %f", (float)_df.global_current_time);
 				ImGui::Text("_frameidx %u", current_frame_idx());
 				ImGui::Text("avg frametime %f", avg_ft);
+				ImGui::Separator();
+				
 				ImGui::Text("Number of objects: %u", renderer.t_statics.size() + renderer.t_objects.size());
+				ImGui::Text("Renderpasses in cache: %u", _vk.renderpass_cache.cache.size());
+				ImGui::Text("Buffers in use: %u", renderer.danger_buffers.size());
+				ImGui::Text("Available scratch buffers: %u", renderer.available_buffers.size());
+				
 				ImGui::SliderFloat("Horizontal speed", &speed, 1.f, 50.f);
 				ImGui::SliderFloat("Vertical speed", &fly_speed, 1.f, 50.f);
 

@@ -30,9 +30,7 @@ namespace zebra {
 		VkQueue graphics_queue;
 		
 		render::RenderPassCache renderpass_cache;
-		VkRenderPass copy_pass;
-		VkRenderPass forward_renderpass;
-		VkRenderPass overlay_renderpass;
+
 		
 		VmaAllocator allocator;
 

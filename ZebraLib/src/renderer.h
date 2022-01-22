@@ -89,23 +89,23 @@ namespace zebra {
 		void add_renderable(Renderer& renderer, RenderObject object, bool bStatic = false);
 		void finish_collect(Renderer& renderer);
 		void render(Renderer& renderer, Assets& assets, PerFrameData& frame, UploadContext& up, GPUSceneData& params, RenderData& rdata);
-		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set, bool bStatic = false);
+		void draw_batches(zebra::render::Renderer& renderer, zebra::UploadContext& up, zebra::PerFrameData& frame, zebra::DescriptorLayoutCache& dcache, std::vector<zebra::render::RenderObject>& object_vector, zebra::render::Assets& assets, VkDescriptorSet& scene_set);
 		void clear_buffers(zebra::render::Renderer& renderer, zebra::UploadContext& up);
 
 		struct DependencyInfo {
 			VkFormat format;
-			VkImageLayout attachment_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 			VkImageLayout initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 			VkImageLayout final_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			VkAttachmentLoadOp on_load = VK_ATTACHMENT_LOAD_OP_CLEAR;
 			VkAttachmentStoreOp on_store = VK_ATTACHMENT_STORE_OP_STORE;
+			VkImageLayout attachment_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 		};
 		
 
 		struct DependencyInfoHash {
 			std::size_t operator()(std::span<DependencyInfo> const& sdi) const noexcept {
 				size_t seed = 0;
-				for (auto di : sdi) {
+				for (auto& di : sdi) {
 					boost::hash_combine(seed, di.format);
 					boost::hash_combine(seed, di.attachment_layout);
 					boost::hash_combine(seed, di.final_layout);
